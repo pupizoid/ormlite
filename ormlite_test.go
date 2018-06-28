@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/assert"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -61,7 +60,6 @@ func (s *testQueryStructSuite) TestQueryStructRelations() {
 	assert.NoError(s.T(), QueryStruct(
 		s.db, "c", &Options{Where: map[string]interface{}{"rowid": 1}, LoadRelations: true}, &c))
 	assert.Equal(s.T(), 2, len(c.Ds))
-	spew.Dump(c)
 }
 
 func (s *testQueryStructSuite) TestQuerySlice() {
