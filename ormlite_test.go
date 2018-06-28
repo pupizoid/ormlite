@@ -13,9 +13,9 @@ import (
 )
 
 type A struct {
-	A int    `sqlutils:"col=id"`
-	B string `sqlutils:"col=b"`
-	C bool   `sqlutils:"col=d"`
+	A int    `ormlite:"col=id"`
+	B string `ormlite:"col=b"`
+	C bool   `ormlite:"col=d"`
 }
 
 type testQueryStructSuite struct {
@@ -77,16 +77,16 @@ func TestQuery(t *testing.T) {
 }
 
 type upsertA struct {
-	ID   int `sqlutils:"col=rowid,primary"`
+	ID   int `ormlite:"col=rowid,primary"`
 	Name string
 }
 
 func (m *upsertA) Table() string { return "a" }
 
 type b struct {
-	ID   int `sqlutils:"col=rowid,primary"`
+	ID   int `ormlite:"col=rowid,primary"`
 	Name string
-	A    *upsertA `sqlutils:"col=a_id,one_to_one"`
+	A    *upsertA `ormlite:"col=a_id,one_to_one"`
 }
 
 func (m *b) Table() string { return "b" }
@@ -99,16 +99,16 @@ type upsertIfNotExistFixture struct {
 //
 
 type testMtMD struct {
-	ID   int `sqlutils:"col=rowid,ref=d_id,primary"`
+	ID   int `ormlite:"col=rowid,ref=d_id,primary"`
 	Name string
 }
 
 func (m *testMtMD) Table() string { return "d" }
 
 type testMtMC struct {
-	ID   int `sqlutils:"col=rowid,ref=c_id,primary"`
+	ID   int `ormlite:"col=rowid,ref=c_id,primary"`
 	Name string
-	Ds   []*testMtMD `sqlutils:"many_to_many,table=c_to_d,field=c_id"`
+	Ds   []*testMtMD `ormlite:"many_to_many,table=c_to_d,field=c_id"`
 }
 
 func (m *testMtMC) Table() string { return "c" }
@@ -187,7 +187,7 @@ func TestUpsert(t *testing.T) {
 }
 
 type deleteA struct {
-	ID int `sqlutils:"primary"`
+	ID int `ormlite:"primary"`
 	B  string
 	D  bool
 }
