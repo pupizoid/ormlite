@@ -216,7 +216,13 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 				break
 			}
 		}
-		rows, err := db.Query(fmt.Sprintf("select %s from %s where %s = ?", rPKField, ri.Table, ri.FieldName), pkField.Interface())
+		
+		var where string 
+		if ri.FieldName != "" {
+			where = fmt.Sprintf("where %s = ?", ri.FieldName)
+		}
+
+		rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), pkField.Interface())
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to query for relations: %v", err)
 		}

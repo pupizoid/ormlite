@@ -12,6 +12,6 @@ Simple package that contains some ORM like functionality for `database/sql` espe
 - `col` - Specifies custom column name for recent field, if not used lowercase of field name is used.
 - `ref` - Specifies name of the column in additional relation table, usually used for many-to-many relations and in the same field as `primary`
 - `table` - Specifies table name where relation's data is stored. Used for `many_to_many` relations.
-- `field` - Specifies model's column name for relation table.
+- `field` - Specifies model's column name for relation table. If it's omitted all rows from `table` will be considered as related.
 - `one_to_one` - Indicates that field represents one to one relation. Field type should be pointer to another type implementing `Model` interface. Only one type of relations can be set for single field.
 - `many_to_many` - Indicates that field represents many to many relation. Field type should be slice of `Model`. Must be combinated with `table` and `field` options. 
