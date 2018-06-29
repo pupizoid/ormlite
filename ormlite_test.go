@@ -17,6 +17,10 @@ type A struct {
 	C bool   `ormlite:"col=d"`
 }
 
+type F struct {
+	Ds []*testMtMD `ormlite:"many_to_many,table=c_to_d"`
+}
+
 type testQueryStructSuite struct {
 	suite.Suite
 	db *sql.DB
@@ -60,6 +64,12 @@ func (s *testQueryStructSuite) TestQueryStructRelations() {
 	assert.NoError(s.T(), QueryStruct(
 		s.db, "c", &Options{Where: map[string]interface{}{"rowid": 1}, LoadRelations: true}, &c))
 	assert.Equal(s.T(), 2, len(c.Ds))
+}
+
+func (s *testQueryStructSuite) TestQueryStructFromMultipleTables() {
+	var f F
+	assert.NoError(s.T(), QueryStruct(s.db, "", nil, &f))
+	assert.Equal(s.T(), 2, len(f.Ds))
 }
 
 func (s *testQueryStructSuite) TestQuerySlice() {

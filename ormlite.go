@@ -176,19 +176,27 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 		}
 	}
 
-	rows, err := queryWithOptions(db, table, columns, opts)
-	if err != nil {
-		return fmt.Errorf("ormlite: failed to perform query: %v", err)
+	if len(columns) == 0 && len(relations) != 0 {
+		goto Relations
 	}
 
-	for rows.Next() {
-		if err := rows.Scan(fieldPtrs...); err != nil {
-			return fmt.Errorf("ormlite: failed to scan: %v", err)
+	{
+		rows, err := queryWithOptions(db, table, columns, opts)
+		if err != nil {
+			return fmt.Errorf("ormlite: failed to perform query: %v", err)
+		}
+
+		for rows.Next() {
+			if err := rows.Scan(fieldPtrs...); err != nil {
+				return fmt.Errorf("ormlite: failed to scan: %v", err)
+			}
+		}
+		if opts == nil || !opts.LoadRelations {
+			return nil
 		}
 	}
-	if opts == nil || !opts.LoadRelations {
-		return nil
-	}
+
+Relations:
 	// load relations
 	for ri, rv := range relations {
 		var (
@@ -216,13 +224,17 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 				break
 			}
 		}
-		
-		var where string 
+
+		var (
+			where string
+			args []interface{}
+		)
 		if ri.FieldName != "" {
 			where = fmt.Sprintf("where %s = ?", ri.FieldName)
+			args = append(args, pkField.Interface())
 		}
 
-		rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), pkField.Interface())
+		rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to query for relations: %v", err)
 		}
