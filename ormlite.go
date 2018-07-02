@@ -40,9 +40,10 @@ type Model interface {
 }
 
 type relationInfo struct {
-	Table     string
-	Type      relationType
-	FieldName string
+	Table      string
+	Type       relationType
+	FieldName  string
+	RefPkValue interface{}
 }
 
 func lookForSetting(s, setting string) string {
@@ -104,21 +105,22 @@ func queryWithOptions(db *sql.DB, table string, columns []string, opts *Options)
 		}
 		if opts.Limit != 0 {
 			q += fmt.Sprintf(" limit %d", opts.Limit)
-		}
-		if opts.Offset != 0 {
-			q += fmt.Sprintf(" offset %d", opts.Offset)
+			if opts.Offset != 0 {
+				q += fmt.Sprintf(" offset %d", opts.Offset)
+			}
 		}
 		if opts.OrderBy != nil {
 			q += fmt.Sprintf(" order by %s %s", opts.OrderBy.Field, opts.OrderBy.Order)
 		}
 	}
+	// spew.Dump(q)
 	return db.Query(q, values...)
 }
 
 func getFieldColumnName(field reflect.StructField) string {
 	tag, ok := field.Tag.Lookup(packageTagName)
-	if !ok || tag == "" || tag == "-" {
-		return ""
+	if !ok || tag == "" {
+		return strings.ToLower(field.Name)
 	}
 	pairs := strings.Split(tag, ",")
 	for _, pair := range pairs {
@@ -130,7 +132,7 @@ func getFieldColumnName(field reflect.StructField) string {
 			return kv[1]
 		}
 	}
-	return ""
+	return strings.ToLower(field.Name)
 }
 
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
@@ -145,6 +147,15 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 		return fmt.Errorf("ormlite: expected pointer to struct, got %T", oe.Type())
 	}
 
+	if table == "" {
+		if m, ok := ov.Type().MethodByName("Table"); ok {
+			// TODO: find another way to check implementation of Model interface
+			table = m.Func.Call([]reflect.Value{reflect.New(ov.Type()).Elem()})[0].Interface().(string)
+		} else {
+			return errors.New("ormlite: empty table with non model")
+		}
+	}
+
 	var (
 		pkField   reflect.Value
 		columns   []string
@@ -153,12 +164,22 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 	)
 
 	for i := 0; i < oe.NumField(); i++ {
+		tag := oe.Type().Field(i).Tag.Get(packageTagName)
+		if tag == "-" {
+			continue
+		}
+
 		if ri := extractRelationInfo(oe.Type().Field(i)); ri != nil {
 			if ri.Type == oneToOne {
-				continue
+				if c := getFieldColumnName(oe.Type().Field(i)); c != "" {
+					columns = append(columns, c)
+				} else {
+					columns = append(columns, strings.ToLower(oe.Type().Field(i).Name))
+				}
+				fieldPtrs = append(fieldPtrs, &ri.RefPkValue)
 			}
 			relations[ri] = oe.Field(i)
-			break
+			continue
 		}
 		if c := getFieldColumnName(oe.Type().Field(i)); c != "" {
 			columns = append(columns, c)
@@ -167,10 +188,6 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 		}
 		fieldPtrs = append(fieldPtrs, oe.Field(i).Addr().Interface())
 
-		tag, ok := oe.Type().Field(i).Tag.Lookup(packageTagName)
-		if !ok {
-			continue
-		}
 		if lookForSetting(tag, "primary") == "primary" {
 			pkField = oe.Field(i)
 		}
@@ -199,55 +216,86 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 Relations:
 	// load relations
 	for ri, rv := range relations {
-		var (
-			rPKField string
-			rPKs     []interface{}
-		)
-		if rv.Kind() != reflect.Slice {
-			return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv.Type())
-		}
-		rvt := rv.Type().Elem()
-		if rvt.Kind() != reflect.Ptr {
-			return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rvt)
-		}
-		rve := rvt.Elem()
-		if rve.Kind() != reflect.Struct {
-			return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rve)
-		}
-		for i := 0; i < rve.NumField(); i++ {
-			t, ok := rve.Field(i).Tag.Lookup(packageTagName)
+		if ri.Type == manyToMany {
+			var (
+				rPKField string
+				rPKs     []interface{}
+			)
+			if rv.Kind() != reflect.Slice {
+				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv.Type())
+			}
+			rvt := rv.Type().Elem()
+			if rvt.Kind() != reflect.Ptr {
+				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rvt)
+			}
+			rve := rvt.Elem()
+			if rve.Kind() != reflect.Struct {
+				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rve)
+			}
+			for i := 0; i < rve.NumField(); i++ {
+				t, ok := rve.Field(i).Tag.Lookup(packageTagName)
+				if !ok {
+					continue
+				}
+				if lookForSetting(t, "primary") == "primary" {
+					rPKField = lookForSetting(t, "col")
+					break
+				}
+			}
+
+			var (
+				where string
+				args  []interface{}
+			)
+			if ri.FieldName != "" {
+				where = fmt.Sprintf("where %s = ?", ri.FieldName)
+				args = append(args, pkField.Interface())
+			}
+
+			rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
+			if err != nil {
+				return fmt.Errorf("ormlite: failed to query for relations: %v", err)
+			}
+			for rows.Next() {
+				var rPK int
+				if err := rows.Scan(&rPK); err != nil {
+					return fmt.Errorf("ormlite: failed to scan relation pk: %v", err)
+				}
+				rPKs = append(rPKs, rPK)
+			}
+			if err := QuerySlice(
+				db, "", &Options{Where: map[string]interface{}{rPKField: rPKs}}, rv.Addr().Interface()); err != nil {
+				return fmt.Errorf("ormlite: failed to query slice: %v", err)
+			}
+		} else if ri.Type == oneToOne {
+			m, ok := rv.Interface().(Model)
 			if !ok {
-				continue
+				return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
 			}
-			if lookForSetting(t, "primary") == "primary" {
-				rPKField = lookForSetting(t, "col")
-				break
+			if rv.Kind() != reflect.Ptr {
+				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv)
 			}
-		}
 
-		var (
-			where string
-			args []interface{}
-		)
-		if ri.FieldName != "" {
-			where = fmt.Sprintf("where %s = ?", ri.FieldName)
-			args = append(args, pkField.Interface())
-		}
-
-		rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
-		if err != nil {
-			return fmt.Errorf("ormlite: failed to query for relations: %v", err)
-		}
-		for rows.Next() {
-			var rPK int
-			if err := rows.Scan(&rPK); err != nil {
-				return fmt.Errorf("ormlite: failed to scan relation pk: %v", err)
+			if !rv.IsNil() {
+				return errors.New("ormlite: can't load relation to non nil value")
 			}
-			rPKs = append(rPKs, rPK)
-		}
-		if err := QuerySlice(
-			db, "", &Options{Where: map[string]interface{}{rPKField: rPKs}}, rv.Addr().Interface()); err != nil {
-			return fmt.Errorf("ormlite: failed to query slice: %v", err)
+
+			refObj := reflect.New(rv.Type().Elem())
+
+			var refPkField string
+			for i := 0; i < rv.Type().Elem().NumField(); i++ {
+				tag := rv.Type().Elem().Field(i).Tag.Get(packageTagName)
+				if lookForSetting(tag, "primary") == "primary" {
+					refPkField = getFieldColumnName(rv.Type().Elem().Field(i))
+				}
+			}
+			if refPkField == "" {
+				return errors.New("ormlite: referenced model does not have primary key")
+			}
+			if err := QueryStruct(db, m.Table(), &Options{Where: map[string]interface{}{refPkField: ri.RefPkValue}}, refObj.Interface()); err != nil {
+				return err
+			}
+			rv.Set(refObj)
 		}
 	}
 	return nil
@@ -287,9 +335,15 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 		fi      = make(map[int]struct{})
 	)
 	for i := 0; i < oss.NumField(); i++ {
-		if ri := extractRelationInfo(oss.Field(i)); ri != nil && ri.Type != oneToOne {
+		tag := oss.Field(i).Tag.Get(packageTagName)
+		if tag == "-" {
 			continue
 		}
+
+		if ri := extractRelationInfo(oss.Field(i)); ri != nil {
+			continue
+		}
+
 		if c := getFieldColumnName(oss.Field(i)); c != "" {
 			columns = append(columns, c)
 		} else {
@@ -330,11 +384,17 @@ func Delete(db *sql.DB, m Model) error {
 	)
 
 	for i := 0; i < s.NumField(); i++ {
-		if c := getFieldColumnName(s.Type().Field(i)); c != "" {
-			columns = append(columns, fmt.Sprintf("%s = ?", c))
-		} else {
-			columns = append(columns, fmt.Sprintf("%s = ?", strings.ToLower(s.Type().Field(i).Name)))
+		tag := s.Type().Field(i).Tag.Get(packageTagName)
+		if tag == "-" {
+			continue
 		}
+
+		if ri := extractRelationInfo(s.Type().Field(i)); ri != nil {
+			if ri.Type != noRelation {
+				continue
+			} // don't relay on mtm relation fields
+		}
+		columns = append(columns, fmt.Sprintf("%s = ?", getFieldColumnName(s.Type().Field(i))))
 		values = append(values, s.Field(i).Interface())
 	}
 
@@ -381,6 +441,10 @@ func Upsert(db *sql.DB, m Model) error {
 			continue
 		}
 
+		if fTag == "-" {
+			continue
+		}
+
 		if strings.Contains(fTag, "primary") {
 			if reflect.Zero(et.Field(i).Type).Interface() != ev.Elem().Field(i).Interface() {
 				pk = ev.Elem().Field(i).Interface()
@@ -396,8 +460,6 @@ func Upsert(db *sql.DB, m Model) error {
 
 		if rInfo := extractRelationInfo(et.Field(i)); rInfo != nil {
 			switch rInfo.Type {
-			case noRelation, oneToMany:
-				continue
 			case oneToOne:
 				refValue := reflect.ValueOf(ev.Elem().Field(i).Interface())
 				if refValue.Kind() != reflect.Ptr {
@@ -417,50 +479,65 @@ func Upsert(db *sql.DB, m Model) error {
 			case manyToMany:
 				relations[rInfo] = ev.Elem().Field(i).Interface()
 			}
+			continue
+		}
+
+		if c := getFieldColumnName(et.Field(i)); c != "" {
+			fields = append(fields, c)
 		} else {
-			values = append(values, ev.Elem().Field(i).Interface())
+			fields = append(fields, strings.ToLower(et.Field(i).Name))
 		}
+		values = append(values, ev.Elem().Field(i).Interface())
+
 	}
 
-	var query string
-	if pk == nil {
-		query = fmt.Sprintf(
-			"insert into %s(%s) values(%s)", m.Table(), strings.Join(fields, ","),
-			strings.Trim(strings.Repeat("?,", len(fields)), ","),
-		)
-	} else {
-		var fieldPairs []string
-		for _, f := range fields {
-			fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
-		}
-		values = append(values, pk)
-		query = fmt.Sprintf(
-			fmt.Sprintf("update %s set %s where %s = ?", m.Table(), strings.Join(fieldPairs, ","), pkFieldName),
-		)
+	if len(fields) == 0 && len(relations) != 0 {
+		goto Relations
 	}
 
-	res, err := db.Exec(query, values...)
-	if err != nil {
-		return fmt.Errorf("ormlite: failed to exec: %v", err)
-	}
-	ra, err := res.RowsAffected()
-	if err != nil || ra == 0 {
-		return errors.New("ormlite: no rows were affected")
-	}
-	// if it was insert query - set new id to entry
-	if pk == nil {
-		iid, err := res.LastInsertId()
+	{
+		var query string
+		if pk == nil {
+			query = fmt.Sprintf(
+				"insert into %s(%s) values(%s)", m.Table(), strings.Join(fields, ","),
+				strings.Trim(strings.Repeat("?,", len(fields)), ","),
+			)
+		} else {
+			var fieldPairs []string
+			for _, f := range fields {
+				fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
+			}
+			values = append(values, pk)
+			query = fmt.Sprintf(
+				fmt.Sprintf("update %s set %s where %s = ?", m.Table(), strings.Join(fieldPairs, ","), pkFieldName),
+			)
+		}
+
+		res, err := db.Exec(query, values...)
 		if err != nil {
-			return fmt.Errorf("ormlite: failed to get last inserted id: %v", err)
+			return fmt.Errorf("ormlite: failed to exec: %v", err)
 		}
-		if pkField.Kind() != reflect.Int {
-			return errors.New("ormlite: insert functionality can be used only for models with int primary keys")
+		ra, err := res.RowsAffected()
+		if err != nil || ra == 0 {
+			return errors.New("ormlite: no rows were affected")
 		}
-		pkField.SetInt(iid)
+		// if it was insert query - set new id to entry
+		if pk == nil {
+			iid, err := res.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("ormlite: failed to get last inserted id: %v", err)
+			}
+			if pkField.Kind() != reflect.Int {
+				return errors.New("ormlite: insert functionality can be used only for models with int primary keys")
+			}
+			pkField.SetInt(iid)
+		}
 	}
+
+Relations:
 	// if there were mtm relations process them
 	for rel, iface := range relations {
-		if rel.Table == "" || rel.FieldName == "" {
+		if rel.Table == "" {
 			return errors.New("ormlite: failed to process relations: not enougth settings")
 		}
 		rv := reflect.ValueOf(iface)
@@ -489,8 +566,18 @@ func Upsert(db *sql.DB, m Model) error {
 		if refFieldName == "" {
 			return errors.New("related type does not have primary key or reference field name")
 		}
-		exgRels := map[interface{}]bool{}
-		rows, err := db.Query(fmt.Sprintf("select %s from %s where %s = ?", refFieldName, rel.Table, rel.FieldName), pk)
+
+		var (
+			where   string
+			args    []interface{}
+			exgRels = make(map[interface{}]bool)
+		)
+		if rel.FieldName != "" {
+			where = fmt.Sprintf("where %s = ?", rel.FieldName)
+			args = append(args, pkField.Interface())
+		}
+
+		rows, err := db.Query(fmt.Sprintf("select %s from %s %s", refFieldName, rel.Table, where), args...)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to load mtm relations: %v", err)
 		}
@@ -510,9 +597,15 @@ func Upsert(db *sql.DB, m Model) error {
 				}
 				if lookForSetting(t, "primary") == "primary" {
 					if _, ok := exgRels[is.Field(i).Interface()]; !ok {
+						values := []interface{}{is.Field(i).Interface()}
+						fields := fmt.Sprintf("%s", refFieldName)						
+						if rel.FieldName != "" {
+							fields = fmt.Sprintf("%s, %s", rel.FieldName, refFieldName)
+							values = append([]interface{}{pk}, values...)
+						}
 						res, err := db.Exec(
 							fmt.Sprintf(
-								"insert into %s(%s, %s) values(?, ?)", rel.Table, rel.FieldName, refFieldName), pk, is.Field(i).Interface())
+								"insert into %s(%s) values(%s)", rel.Table, fields, strings.Trim(strings.Repeat("?,", len(values)), ",")), values...)
 						if err != nil {
 							return fmt.Errorf("ormlite: failed to add missing relation: %v", err)
 						}
@@ -528,9 +621,15 @@ func Upsert(db *sql.DB, m Model) error {
 		// delete
 		for refPK, exists := range exgRels {
 			if !exists {
+				values := []interface{}{refPK}
+				fields := fmt.Sprintf("%s = ?", refFieldName)
+				if rel.FieldName != "" {
+					fields += fmt.Sprintf(" and %s = ?", rel.FieldName)
+					values = append(values, pk)
+				}
 				res, err := db.Exec(
 					fmt.Sprintf(
-						"delete from %s where %s = ? and %s = ?", rel.Table, rel.FieldName, refFieldName), pk, refPK)
+						"delete from %s where %s", rel.Table, fields), values...)
 				if err != nil {
 					return fmt.Errorf("ormlite: failed to delete removed relation: %v", err)
 				}

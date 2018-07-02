@@ -11,231 +11,285 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type A struct {
-	A int    `ormlite:"col=id"`
-	B string `ormlite:"col=b"`
-	C bool   `ormlite:"col=d"`
+type simpleModel struct {
+	ID             int `ormlite:"col=rowid,primary"`
+	NotTaggedField string
+	TaggedField    string `ormlite:"col=tagged_field"`
+	OmittedField   string `ormlite:"-"`
 }
 
-type F struct {
-	Ds []*testMtMD `ormlite:"many_to_many,table=c_to_d"`
-}
+func (sm *simpleModel) Table() string { return "simple_model" }
 
-type testQueryStructSuite struct {
+type simpleModelFixture struct {
 	suite.Suite
 	db *sql.DB
 }
 
-func (s *testQueryStructSuite) SetupSuite() {
-	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(s.T(), err)
+func (s *simpleModelFixture) SetupSuite() {
+	c, err := sql.Open("sqlite3", ":memory:")
+	assert.NoError(s.T(), err)
 
-	_, err = db.Exec(`
-		create table a (id integer primary key, b text not null, d boolean not null);
-		insert into a (b, d) values ('test text', true), ('test text 2', false);
+	_, err = c.Exec(`
+		create table simple_model (
+			nottaggedfield text,
+			tagged_field text
+		);
 
-		create table c (name text);
-		create table d (name text);
-		create table c_to_d(c_id int references c(rowid), d_id int references d(rowid));
-		
-		insert into c(name) values ('c test 1');
-		insert into d(name) values ('d test 1'), ('d test 2'), ('d test 3');
-
-		insert into c_to_d(c_id, d_id) values (1,2), (1,3);
+		insert into simple_model(nottaggedfield, tagged_field) values 
+			('test', 'test tagged'),
+			('asdad', 'assddffgh'),
+			('1111', '22222');
 	`)
-	require.NoError(s.T(), err)
-
-	s.db = db
+	assert.NoError(s.T(), err)
+	s.db = c
 }
 
-func (s *testQueryStructSuite) TearDownSuite() {
+func (s *simpleModelFixture) TearDownSuite() {
 	s.db.Close()
 }
 
-func (s *testQueryStructSuite) TestQueryStruct() {
-	var a A
-	assert.NoError(s.T(), QueryStruct(s.db, "a", &Options{Where: map[string]interface{}{"id": 1}}, &a))
-	assert.Equal(s.T(), "test text", a.B)
-	assert.Equal(s.T(), true, a.C)
+func (s *simpleModelFixture) TestCRUD() {
+	var m1 = simpleModel{TaggedField: "some tagged field"}
+	assert.NoError(s.T(), Upsert(s.db, &m1))
+	assert.NotZero(s.T(), m1.ID)
+	m1.NotTaggedField = "some not tagged field"
+	assert.NoError(s.T(), Upsert(s.db, &m1))
+
+	var m2 simpleModel
+	assert.NoError(s.T(), QueryStruct(s.db, "simple_model", &Options{Where: map[string]interface{}{"rowid": m1.ID}}, &m2))
+	assert.Equal(s.T(), m1, m2)
+
+	assert.NoError(s.T(), Delete(s.db, &m2))
 }
 
-func (s *testQueryStructSuite) TestQueryStructRelations() {
-	var c testMtMC
-	assert.NoError(s.T(), QueryStruct(
-		s.db, "c", &Options{Where: map[string]interface{}{"rowid": 1}, LoadRelations: true}, &c))
-	assert.Equal(s.T(), 2, len(c.Ds))
+func (s *simpleModelFixture) TestQuerySlice() {
+	var mm []*simpleModel
+	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", nil, &mm))
+	assert.NotEmpty(s.T(), mm)
 }
 
-func (s *testQueryStructSuite) TestQueryStructFromMultipleTables() {
-	var f F
-	assert.NoError(s.T(), QueryStruct(s.db, "", nil, &f))
-	assert.Equal(s.T(), 2, len(f.Ds))
+func (s *simpleModelFixture) TestLimit() {
+	var mm []*simpleModel
+	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", &Options{Limit: 1}, &mm))
+	assert.Equal(s.T(), 1, len(mm))
 }
 
-func (s *testQueryStructSuite) TestQuerySlice() {
-	var aa []*A
-	assert.NoError(s.T(), QuerySlice(s.db, "a", nil, &aa))
-	assert.Equal(s.T(), 2, len(aa))
-	assert.Equal(s.T(), "test text 2", aa[1].B)
-	assert.Equal(s.T(), false, aa[1].C)
+func (s *simpleModelFixture) TestOffset() {
+	var mm []*simpleModel
+	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", &Options{Limit: 2, Offset: 1}, &mm))
+	assert.NotEmpty(s.T(), mm)
+	for _, m := range mm {
+		assert.NotEqual(s.T(), 1, m.ID, "First row shouldn't be returned since offset")
+	}
 }
 
-func TestQuery(t *testing.T) {
-	suite.Run(t, new(testQueryStructSuite))
+func (s *simpleModelFixture) TestOrderBy() {
+	var mm []*simpleModel
+	require.NoError(s.T(), QuerySlice(s.db, "simple_model", &Options{OrderBy: &OrderBy{Field: "rowid", Order: "desc"}}, &mm))
+	assert.NotEmpty(s.T(), mm)
+	assert.NotEqual(s.T(), 1, mm[0].ID)
 }
 
-type upsertA struct {
-	ID   int `ormlite:"col=rowid,primary"`
-	Name string
+func TestSimpleModel(t *testing.T) {
+	suite.Run(t, new(simpleModelFixture))
 }
 
-func (m *upsertA) Table() string { return "a" }
-
-type b struct {
-	ID   int `ormlite:"col=rowid,primary"`
-	Name string
-	A    *upsertA `ormlite:"col=a_id,one_to_one"`
+type relatedModel struct {
+	ID int `ormlite:"col=rowid,primary,ref=rel_id"`
+	Field string 
 }
 
-func (m *b) Table() string { return "b" }
+func (m *relatedModel) Table() string { return "related_model" }
+type modelOneToOne struct {
+	ID int `ormlite:"col=rowid,primary"`
+	Related *relatedModel `ormlite:"one_to_one,col=rel_id"`
+}
 
-type upsertIfNotExistFixture struct {
+func (m *modelOneToOne) Table() string { return "one_to_one_rel" }
+
+type oneToOneRelationFixture struct {
 	suite.Suite
 	db *sql.DB
 }
 
-//
-
-type testMtMD struct {
-	ID   int `ormlite:"col=rowid,ref=d_id,primary"`
-	Name string
-}
-
-func (m *testMtMD) Table() string { return "d" }
-
-type testMtMC struct {
-	ID   int `ormlite:"col=rowid,ref=c_id,primary"`
-	Name string
-	Ds   []*testMtMD `ormlite:"many_to_many,table=c_to_d,field=c_id"`
-}
-
-func (m *testMtMC) Table() string { return "c" }
-
-func (s *upsertIfNotExistFixture) SetupSuite() {
+func (s *oneToOneRelationFixture) SetupSuite() {
 	c, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(s.T(), err)
 
 	_, err = c.Exec(`
-	create table a (name text); 
-	create table b (name text, a_id int references a(rowid));	
-
-	create table c (name text);
-	create table d (name text);
-	create table c_to_d(c_id int references c(rowid), d_id int references d(rowid));
-	
-	insert into c(name) values ('c test 1'), ('c test 2'), ('c test 3');
-	insert into d(name) values ('d test 1'), ('d test 2'), ('d test 3');
+		create table related_model ( field text );
+		create table one_to_one_rel ( rel_id int references related_model (rowid) );
+		
+		insert into related_model (field) values('test'), ('test 2');
+		insert into one_to_one_rel (rel_id) values(1);
 	`)
 	require.NoError(s.T(), err)
 	s.db = c
 }
 
-func (s *upsertIfNotExistFixture) TearDownSuite() {
+func (s *oneToOneRelationFixture) TearDownSuite() {
 	s.db.Close()
 }
 
-func (s *upsertIfNotExistFixture) TestUpsertOneToOne() {
-	a1 := &upsertA{Name: "A struct"}
-	assert.NoError(s.T(), Upsert(s.db, a1))
-	assert.Equal(s.T(), 1, a1.ID)
-	// test update
-	a1.Name = "A struct edited"
-	assert.NoError(s.T(), Upsert(s.db, a1))
-	// assert
-	var test upsertA
-	assert.NoError(s.T(), QueryStruct(s.db, "a", &Options{Where: map[string]interface{}{"rowid": 1}}, &test))
-	assert.Equal(s.T(), a1.ID, test.ID)
-	assert.Equal(s.T(), a1.Name, test.Name)
-	// check refecence insert
-	b1 := &b{Name: "B struct", A: a1}
-	assert.NoError(s.T(), Upsert(s.db, b1))
-	assert.Equal(s.T(), 1, b1.ID)
+func (s *oneToOneRelationFixture) TestQueryStruct() {
+	var m modelOneToOne
+	require.NoError(s.T(), QueryStruct(s.db, "one_to_one_rel", &Options{LoadRelations: true}, &m))
+	assert.Equal(s.T(), 1, m.ID)
+	require.NotNil(s.T(), m.Related)
+	assert.Equal(s.T(), "test", m.Related.Field)
+	assert.Equal(s.T(), 1, m.Related.ID)
 }
 
-func (s *upsertIfNotExistFixture) TestUpsertManyToMany() {
-	var (
-		dd []*testMtMD
-		cc []*testMtMC
-	)
-	assert.NoError(s.T(), QuerySlice(s.db, "c", nil, &cc))
-	assert.NoError(s.T(), QuerySlice(s.db, "d", nil, &dd))
-	// test add relations
-	cc[0].Ds = append(cc[0].Ds, dd[1:]...)
-	assert.NoError(s.T(), Upsert(s.db, cc[0]))
-	var c int
-	rows, err := s.db.Query("select count(*) from c_to_d")
-	assert.NoError(s.T(), err)
-	for rows.Next() {
-		assert.NoError(s.T(), rows.Scan(&c))
+func (s *oneToOneRelationFixture) TestUpsertAndDelete() {
+	var m = modelOneToOne{Related: &relatedModel{ID: 2, Field: "lol"}}
+	require.NoError(s.T(), Upsert(s.db, &m))
+	var mm []*modelOneToOne
+	require.NoError(s.T(), QuerySlice(s.db, m.Table(), nil, &mm))
+	assert.Equal(s.T(), 2, len(mm))
+	for _, m := range mm {
+		assert.NoError(s.T(), QueryStruct(s.db, m.Table(), &Options{LoadRelations: true, Where: map[string]interface{}{"rowid": m.ID}}, m))
 	}
-	assert.Equal(s.T(), 2, c)
-	// test remove relation
-	cc[0].Ds = cc[0].Ds[:len(cc[0].Ds)-1]
-	assert.NoError(s.T(), Upsert(s.db, cc[0]))
-	rows, err = s.db.Query("select count(*) from c_to_d")
-	assert.NoError(s.T(), err)
-	for rows.Next() {
-		assert.NoError(s.T(), rows.Scan(&c))
-	}
-	assert.Equal(s.T(), 1, c)
+	assert.Equal(s.T(), 2, mm[1].Related.ID)
+	assert.Equal(s.T(), "test 2", mm[1].Related.Field)
+	// 
+	assert.NoError(s.T(), Delete(s.db, mm[0]))
 }
 
-func TestUpsert(t *testing.T) {
-	suite.Run(t, new(upsertIfNotExistFixture))
+func TestOneToOneRelation(t *testing.T) {
+	suite.Run(t, new(oneToOneRelationFixture))
 }
 
-type deleteA struct {
-	ID int `ormlite:"primary"`
-	B  string
-	D  bool
+type modelManyToMany struct {
+	ID int `ormlite:"col=rowid,primary"`
+	Name string
+	Related []*relatedModel `ormlite:"many_to_many,table=mtm,field=m_id"`
 }
 
-func (m *deleteA) Table() string { return "a" }
+func (*modelManyToMany) Table() string { return "mtm_model" }
 
-type testDeleteModel struct {
+type manyToManyRelationFixture struct {
 	suite.Suite
 	db *sql.DB
 }
 
-func (s *testDeleteModel) SetupSuite() {
-	db, err := sql.Open("sqlite3", ":memory:")
+func (s *manyToManyRelationFixture) SetupSuite() {
+	c, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(s.T(), err)
 
-	_, err = db.Exec(`
-		create table a (id integer primary key, b text not null, d boolean not null);
-		insert into a (b, d) values ('test text', true), ('test text 2', false);
+	_, err = c.Exec(`
+		create table related_model ( field text );
+		create table mtm_model ( name text );
+
+		create table mtm (m_id int references mtm_model (rowid), rel_id int references related_model (rowid));
+		insert into related_model (field) values('test 1'), ('test 2'), ('test 3');
+		insert into mtm_model(name) values ('name');
+		insert into mtm(m_id, rel_id) values(1, 1), (1, 2);
 	`)
 	require.NoError(s.T(), err)
-
-	s.db = db
+	s.db = c
 }
 
-func (s *testDeleteModel) TearDownSuite() {
+func (s *manyToManyRelationFixture) TearDownSuite() {
 	s.db.Close()
 }
 
-func (s *testDeleteModel) TestDelete() {
-	var res1, res2 []*deleteA
-	assert.NoError(s.T(), QuerySlice(s.db, "a", nil, &res1))
-	assert.Equal(s.T(), 2, len(res1))
-	// delete second one
-	assert.NoError(s.T(), Delete(s.db, res1[1]))
-	// assert now table contains one row
-	assert.NoError(s.T(), QuerySlice(s.db, "a", nil, &res2))
-	assert.Equal(s.T(), 1, len(res2))
-	assert.Equal(s.T(), res1[0], res2[0])
+func (s *manyToManyRelationFixture) TestQuery() {
+	var mm []*modelManyToMany
+	require.NoError(s.T(), QuerySlice(s.db,new(modelManyToMany).Table(), nil, &mm))
+	for _, m := range mm {
+		assert.NoError(s.T(), QueryStruct(s.db, "mtm_model", &Options{LoadRelations: true, Where: map[string]interface{}{"rowid": m.ID}}, m))
+	}
+	assert.Equal(s.T(), 1, len(mm))
+	assert.Equal(s.T(), 2, len(mm[0].Related))
 }
 
-func TestDelete(t *testing.T) {
-	suite.Run(t, new(testDeleteModel))
+func (s *manyToManyRelationFixture) TestUpsert() {
+	var m = modelManyToMany{
+		ID: 1,
+		Name: "name",
+		Related: []*relatedModel{&relatedModel{ID: 2}, &relatedModel{ID: 3}},
+	}
+	require.NoError(s.T(), Upsert(s.db, &m))
+	var m1 modelManyToMany
+	assert.NoError(s.T(), QueryStruct(s.db, "", &Options{LoadRelations: true, Where: map[string]interface{}{"rowid": m.ID}}, &m1))
+	assert.NotEmpty(s.T(), m1.Related)
+	for _, r := range m1.Related {
+		assert.NotEqual(s.T(), 1, r.ID)
+	}
+	m2 := modelManyToMany{Name: "test", Related: []*relatedModel{&relatedModel{ID: 1}}}
+	require.NoError(s.T(), Upsert(s.db, &m2))
+	var c int
+	rows, err := s.db.Query("select count(*) from mtm")
+	require.NoError(s.T(), err)
+	for rows.Next() {
+		require.NoError(s.T(), rows.Scan(&c))
+	}
+	assert.Equal(s.T(), 3, c)
+	assert.NoError(s.T(), Delete(s.db, &m2))
+}
+func TestManyToManyRelation(t *testing.T) {
+	suite.Run(t, new(manyToManyRelationFixture))
+}
+
+type modelMultiTable struct {
+	One []*relatedModel `ormlite:"many_to_many,table=one"`
+	Two []*relatedModel `ormlite:"many_to_many,table=two"`
+}
+
+func (*modelMultiTable) Table() string { return "" }
+
+type modelMultiTableFixture struct {
+	suite.Suite
+	db *sql.DB
+}
+
+func (s *modelMultiTableFixture) SetupSuite() {
+	c, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(s.T(), err)
+
+	_, err = c.Exec(`
+		create table related_model(field text);
+		create table one(rel_id int references related_model(rowid));
+		create table two(rel_id int references related_model(rowid));
+		
+		insert into related_model(field) values('1'), ('2'), ('3'), ('4'), ('5');
+		insert into one(rel_id) values (1), (2), (3);
+		insert into two(rel_id) values (4), (5);
+	`)
+	require.NoError(s.T(), err)
+	s.db = c
+}
+
+func (s *modelMultiTableFixture) TearDownSuite() {
+	s.db.Close()
+}
+
+func (s *modelMultiTableFixture) TestQuery() {
+	var m modelMultiTable
+	require.NoError(s.T(), QueryStruct(s.db, "", &Options{LoadRelations: true}, &m))
+	assert.Equal(s.T(), 3, len(m.One))
+	assert.Equal(s.T(), 2, len(m.Two))
+}
+
+func (s *modelMultiTableFixture) TestUpsert() {
+	m := modelMultiTable{
+		One: []*relatedModel{&relatedModel{ID:1}},
+		Two: []*relatedModel{&relatedModel{ID:1}, &relatedModel{ID:2}, &relatedModel{ID:3}},
+	}
+	require.NoError(s.T(), Upsert(s.db, &m))
+	var c int
+	rows, err := s.db.Query("select count(*) from two")
+	require.NoError(s.T(), err)
+	for rows.Next() {
+		assert.NoError(s.T(), rows.Scan(&c))
+	}
+	assert.Equal(s.T(), 3, c)
+}
+
+func (s *modelMultiTableFixture) TestDelete() {
+	assert.Error(s.T(), Delete(s.db, new(modelMultiTable)))
+}
+
+func TestMultiTableModel(t *testing.T) {
+	suite.Run(t, new(modelMultiTableFixture))
 }
