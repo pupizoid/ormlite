@@ -95,13 +95,14 @@ func TestSimpleModel(t *testing.T) {
 }
 
 type relatedModel struct {
-	ID int `ormlite:"col=rowid,primary,ref=rel_id"`
-	Field string 
+	ID    int `ormlite:"col=rowid,primary,ref=rel_id"`
+	Field string
 }
 
 func (m *relatedModel) Table() string { return "related_model" }
+
 type modelHasOne struct {
-	ID int `ormlite:"col=rowid,primary"`
+	ID      int           `ormlite:"col=rowid,primary"`
 	Related *relatedModel `ormlite:"has_one,col=rel_id"`
 }
 
@@ -151,7 +152,7 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 	}
 	assert.Equal(s.T(), 2, mm[1].Related.ID)
 	assert.Equal(s.T(), "test 2", mm[1].Related.Field)
-	// 
+	//
 	assert.NoError(s.T(), Delete(s.db, mm[0]))
 }
 
@@ -160,15 +161,15 @@ func TestHasOneRelation(t *testing.T) {
 }
 
 type relatingModel struct {
-	ID int `ormlite:"col=rowid,primary"`
+	ID      int           `ormlite:"col=rowid,primary"`
 	Related *hasManyModel `ormlite:"has_one,col=related_id"`
 }
 
 func (*relatingModel) Table() string { return "relating_model" }
 
 type hasManyModel struct {
-	ID int `ormlite:"col=rowid,primary"`
-	Name string
+	ID      int `ormlite:"col=rowid,primary"`
+	Name    string
 	Related []*relatingModel `ormlite:"has_many"`
 }
 
@@ -206,11 +207,11 @@ func (s *hasManyModelFixture) TestQuery() {
 
 func TestHasManyRelation(t *testing.T) {
 	suite.Run(t, new(hasManyModelFixture))
-} 
+}
 
 type modelManyToMany struct {
-	ID int `ormlite:"col=rowid,primary"`
-	Name string
+	ID      int `ormlite:"col=rowid,primary"`
+	Name    string
 	Related []*relatedModel `ormlite:"many_to_many,table=mtm,field=m_id"`
 }
 
@@ -244,7 +245,7 @@ func (s *manyToManyRelationFixture) TearDownSuite() {
 
 func (s *manyToManyRelationFixture) TestQuery() {
 	var mm []*modelManyToMany
-	require.NoError(s.T(), QuerySlice(s.db,new(modelManyToMany).Table(), nil, &mm))
+	require.NoError(s.T(), QuerySlice(s.db, new(modelManyToMany).Table(), nil, &mm))
 	for _, m := range mm {
 		assert.NoError(s.T(), QueryStruct(s.db, "mtm_model", &Options{LoadRelations: true, Where: map[string]interface{}{"rowid": m.ID}}, m))
 	}
@@ -254,8 +255,8 @@ func (s *manyToManyRelationFixture) TestQuery() {
 
 func (s *manyToManyRelationFixture) TestUpsert() {
 	var m = modelManyToMany{
-		ID: 1,
-		Name: "name",
+		ID:      1,
+		Name:    "name",
 		Related: []*relatedModel{&relatedModel{ID: 2}, &relatedModel{ID: 3}},
 	}
 	require.NoError(s.T(), Upsert(s.db, &m))
@@ -322,8 +323,8 @@ func (s *modelMultiTableFixture) TestQuery() {
 
 func (s *modelMultiTableFixture) TestUpsert() {
 	m := modelMultiTable{
-		One: []*relatedModel{&relatedModel{ID:1}},
-		Two: []*relatedModel{&relatedModel{ID:1}, &relatedModel{ID:2}, &relatedModel{ID:3}},
+		One: []*relatedModel{&relatedModel{ID: 1}},
+		Two: []*relatedModel{&relatedModel{ID: 1}, &relatedModel{ID: 2}, &relatedModel{ID: 3}},
 	}
 	require.NoError(s.T(), Upsert(s.db, &m))
 	var c int
