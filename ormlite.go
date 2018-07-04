@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 type relationType int
@@ -14,8 +16,8 @@ const (
 	packageTagName = "ormlite"
 
 	noRelation relationType = 1 << iota
-	oneToMany
-	oneToOne
+	hasMany
+	hasOne
 	manyToMany
 )
 
@@ -67,8 +69,8 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 		return nil
 	}
 
-	if strings.Contains(t, "one_to_one") {
-		ri.Type = oneToOne
+	if strings.Contains(t, "has_one") {
+		ri.Type = hasOne
 		if c := getFieldColumnName(field); c != "" {
 			ri.FieldName = c
 		} else {
@@ -78,6 +80,8 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 		ri.Type = manyToMany
 		ri.Table = lookForSetting(t, "table")
 		ri.FieldName = lookForSetting(t, "field")
+	} else if strings.Contains(t, "has_many") {
+		ri.Type = hasMany
 	} else {
 		return nil
 	}
@@ -135,6 +139,37 @@ func getFieldColumnName(field reflect.StructField) string {
 	return strings.ToLower(field.Name)
 }
 
+func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentType reflect.Type) error {
+	if fieldValue.Kind() != reflect.Slice {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", fieldValue.Type())
+	}
+	rvt := fieldValue.Type().Elem()
+	if rvt.Kind() != reflect.Ptr {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rvt)
+	}
+	rve := rvt.Elem()
+	if rve.Kind() != reflect.Struct {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rve)
+	}
+
+	var relField *reflect.StructField
+	for i := 0; i < rve.NumField(); i++ {
+		f := rve.Field(i)
+		spew.Dump(f)
+		if f.Type.AssignableTo(parentType) {
+			relField = &f
+		}
+	}
+	if relField == nil {
+		return errors.New("ormlite: failed to load has many relation since none fields of related type meet parent type")
+	}
+
+	return QuerySlice(
+		db, "", &Options{
+			Where: map[string]interface{}{
+				getFieldColumnName(*relField): pkField.Interface()}}, fieldValue.Addr().Interface())
+}
+
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
 func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error {
 	ov := reflect.ValueOf(out)
@@ -148,9 +183,8 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 	}
 
 	if table == "" {
-		if m, ok := ov.Type().MethodByName("Table"); ok {
-			// TODO: find another way to check implementation of Model interface
-			table = m.Func.Call([]reflect.Value{reflect.New(ov.Type()).Elem()})[0].Interface().(string)
+		if m, ok := out.(Model); ok {
+			table = m.Table()
 		} else {
 			return errors.New("ormlite: empty table with non model")
 		}
@@ -170,7 +204,7 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 		}
 
 		if ri := extractRelationInfo(oe.Type().Field(i)); ri != nil {
-			if ri.Type == oneToOne {
+			if ri.Type == hasOne {
 				if c := getFieldColumnName(oe.Type().Field(i)); c != "" {
 					columns = append(columns, c)
 				} else {
@@ -267,7 +301,7 @@ Relations:
 				db, "", &Options{Where: map[string]interface{}{rPKField: rPKs}}, rv.Addr().Interface()); err != nil {
 				return fmt.Errorf("ormlite: failed to query slice: %v", err)
 			}
-		} else if ri.Type == oneToOne {
+		} else if ri.Type == hasOne {
 			m, ok := rv.Interface().(Model)
 			if !ok {
 				return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
@@ -296,6 +330,10 @@ Relations:
 				return err
 			}
 			rv.Set(refObj)
+		} else if ri.Type == hasMany {
+			if err := loadHasManyRelation(db, rv, pkField, reflect.TypeOf(out)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -317,11 +355,10 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 	}
 
 	if table == "" {
-		if m, ok := ose.MethodByName("Table"); ok {
-			// TODO: find another way to check implementation of Model interface
-			table = m.Func.Call([]reflect.Value{reflect.New(ose).Elem()})[0].Interface().(string)
+		if m, ok := reflect.New(ose.Elem()).Interface().(Model); ok {
+			table = m.Table()
 		} else {
-			return errors.New("ormlite: empty table with non model")
+			return errors.New("ormlite: destination does not implement Model interface")
 		}
 	}
 
@@ -460,7 +497,7 @@ func Upsert(db *sql.DB, m Model) error {
 
 		if rInfo := extractRelationInfo(et.Field(i)); rInfo != nil {
 			switch rInfo.Type {
-			case oneToOne:
+			case hasOne:
 				refValue := reflect.ValueOf(ev.Elem().Field(i).Interface())
 				if refValue.Kind() != reflect.Ptr {
 					return fmt.Errorf("ormlite: one-to-one relations supports only pointer to struct, not %T", ev.Elem().Field(i).Interface())
@@ -598,7 +635,7 @@ Relations:
 				if lookForSetting(t, "primary") == "primary" {
 					if _, ok := exgRels[is.Field(i).Interface()]; !ok {
 						values := []interface{}{is.Field(i).Interface()}
-						fields := fmt.Sprintf("%s", refFieldName)						
+						fields := fmt.Sprintf("%s", refFieldName)
 						if rel.FieldName != "" {
 							fields = fmt.Sprintf("%s, %s", rel.FieldName, refFieldName)
 							values = append([]interface{}{pk}, values...)

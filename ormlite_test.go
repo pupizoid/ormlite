@@ -100,19 +100,19 @@ type relatedModel struct {
 }
 
 func (m *relatedModel) Table() string { return "related_model" }
-type modelOneToOne struct {
+type modelHasOne struct {
 	ID int `ormlite:"col=rowid,primary"`
-	Related *relatedModel `ormlite:"one_to_one,col=rel_id"`
+	Related *relatedModel `ormlite:"has_one,col=rel_id"`
 }
 
-func (m *modelOneToOne) Table() string { return "one_to_one_rel" }
+func (m *modelHasOne) Table() string { return "one_to_one_rel" }
 
-type oneToOneRelationFixture struct {
+type hasOneRelationFixture struct {
 	suite.Suite
 	db *sql.DB
 }
 
-func (s *oneToOneRelationFixture) SetupSuite() {
+func (s *hasOneRelationFixture) SetupSuite() {
 	c, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(s.T(), err)
 
@@ -127,12 +127,12 @@ func (s *oneToOneRelationFixture) SetupSuite() {
 	s.db = c
 }
 
-func (s *oneToOneRelationFixture) TearDownSuite() {
+func (s *hasOneRelationFixture) TearDownSuite() {
 	s.db.Close()
 }
 
-func (s *oneToOneRelationFixture) TestQueryStruct() {
-	var m modelOneToOne
+func (s *hasOneRelationFixture) TestQueryStruct() {
+	var m modelHasOne
 	require.NoError(s.T(), QueryStruct(s.db, "one_to_one_rel", &Options{LoadRelations: true}, &m))
 	assert.Equal(s.T(), 1, m.ID)
 	require.NotNil(s.T(), m.Related)
@@ -140,10 +140,10 @@ func (s *oneToOneRelationFixture) TestQueryStruct() {
 	assert.Equal(s.T(), 1, m.Related.ID)
 }
 
-func (s *oneToOneRelationFixture) TestUpsertAndDelete() {
-	var m = modelOneToOne{Related: &relatedModel{ID: 2, Field: "lol"}}
+func (s *hasOneRelationFixture) TestUpsertAndDelete() {
+	var m = modelHasOne{Related: &relatedModel{ID: 2, Field: "lol"}}
 	require.NoError(s.T(), Upsert(s.db, &m))
-	var mm []*modelOneToOne
+	var mm []*modelHasOne
 	require.NoError(s.T(), QuerySlice(s.db, m.Table(), nil, &mm))
 	assert.Equal(s.T(), 2, len(mm))
 	for _, m := range mm {
@@ -155,9 +155,58 @@ func (s *oneToOneRelationFixture) TestUpsertAndDelete() {
 	assert.NoError(s.T(), Delete(s.db, mm[0]))
 }
 
-func TestOneToOneRelation(t *testing.T) {
-	suite.Run(t, new(oneToOneRelationFixture))
+func TestHasOneRelation(t *testing.T) {
+	suite.Run(t, new(hasOneRelationFixture))
 }
+
+type relatingModel struct {
+	ID int `ormlite:"col=rowid,primary"`
+	Related *hasManyModel `ormlite:"has_one,col=related_id"`
+}
+
+func (*relatingModel) Table() string { return "relating_model" }
+
+type hasManyModel struct {
+	ID int `ormlite:"col=rowid,primary"`
+	Name string
+	Related []*relatingModel `ormlite:"has_many"`
+}
+
+func (*hasManyModel) Table() string { return "has_many_model" }
+
+type hasManyModelFixture struct {
+	suite.Suite
+	db *sql.DB
+}
+
+func (s *hasManyModelFixture) SetupSuite() {
+	c, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(s.T(), err)
+	_, err = c.Exec(`
+		create table has_many_model (name text);
+		create table relating_model (related_id int references has_many_model (rowid));
+
+		insert into has_many_model (name) values ('test');
+		insert into relating_model (related_id) values (1), (1), (1);
+	`)
+	require.NoError(s.T(), err)
+	s.db = c
+}
+
+func (s *hasManyModelFixture) TearDownSuite() {
+	s.db.Close()
+}
+
+func (s *hasManyModelFixture) TestQuery() {
+	var m hasManyModel
+	require.NoError(s.T(), QueryStruct(s.db, "", &Options{LoadRelations: true}, &m))
+	assert.NotNil(s.T(), m.Related)
+	assert.Equal(s.T(), 3, len(m.Related))
+}
+
+func TestHasManyRelation(t *testing.T) {
+	suite.Run(t, new(hasManyModelFixture))
+} 
 
 type modelManyToMany struct {
 	ID int `ormlite:"col=rowid,primary"`

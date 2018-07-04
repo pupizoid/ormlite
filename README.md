@@ -15,3 +15,12 @@ Simple package that contains some ORM like functionality for `database/sql` espe
 - `field` - Specifies model's column name for relation table. If it's omitted all rows from `table` will be considered as related.
 - `one_to_one` - Indicates that field represents one to one relation. Field type should be pointer to another type implementing `Model` interface. Only one type of relations can be set for single field.
 - `many_to_many` - Indicates that field represents many to many relation. Field type should be slice of `Model`. Must be combinated with `table` and `field` options. 
+
+## Model
+```go
+type Model interface {
+    Table() string
+}
+```
+This package mainly operates with a Model interface. Though there is an ability to load data specifing custom table, Model is used to process relations.
+
