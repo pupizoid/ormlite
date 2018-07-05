@@ -71,3 +71,29 @@ type HasManyModel {
   Related []*HasOneModel `ormlite:"has_many"`
 }
 ```
+`many_to_many` is a special type relation since it usually uses additional mapping table for two models. This package allows you to use it in two ways. Relations with mapping table:
+```go
+type FirstModel struct {
+    ID int `ormlite:"ref=first_id,primary"`
+    Related []*SecondModel `ormlite:"many_to_many,table=first_to_second,field=first_id"`
+}
+
+type SecondModel struct {
+    ID int `ormlite:"ref=second_id,primary"`
+    Related []*FirstModel `ormlite:"many_to_many,table=first_to_second,field=second_id"`
+}
+```
+It's not nessesary to describe relations for both structs. Make sure that tag settings contains folowing fields:
+- `table`: mapping table name
+- `field`: foreign key of current model in the mapping table
+- `ref`: should be used with `primary` field of related model, it's needed to obtaind foreign key in mapping table
+
+The second way is usefull when you have data model containing sets of different models. In this case you can define model
+without primary key:
+```go
+type MetaModel struct {
+    Firsts []*FirstModel `ormlite:"many_to_many,table=first"`
+    Seconds []*SecondModel `ormlite:"many_to_many,table=second"`
+}
+```
+`field` setting should be omitted since `MetaModel` is virtual and don't have representation in database. Multi table models also supports quering and updating with relations, but not creation or deletion.
