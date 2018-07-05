@@ -3,6 +3,6 @@ go:
  - "1.9"
  - "1.10"
 script:
- - go test -race -coverprofile=coverage.txt -covermode=atomic
+ - go test -race -coverprofile=coverage.txt
 after_success:
  - bash <(curl -s https://codecov.io/bash)

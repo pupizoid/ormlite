@@ -11,6 +11,10 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+type model struct{}
+
+func (*model) Table() string { return "" }
+
 type simpleModel struct {
 	ID             int `ormlite:"col=rowid,primary"`
 	NotTaggedField string
@@ -88,6 +92,20 @@ func (s *simpleModelFixture) TestOrderBy() {
 	require.NoError(s.T(), QuerySlice(s.db, "simple_model", &Options{OrderBy: &OrderBy{Field: "rowid", Order: "desc"}}, &mm))
 	assert.NotEmpty(s.T(), mm)
 	assert.NotEqual(s.T(), 1, mm[0].ID)
+}
+
+func (s *simpleModelFixture) TestInvalidModels() {
+	var m struct {
+		ID int
+	}
+	assert.Error(s.T(), QueryStruct(s.db, "", nil, m))
+	assert.Error(s.T(), QueryStruct(s.db, "", nil, &m))
+	assert.Error(s.T(), QuerySlice(s.db, "", nil, m))
+	assert.Error(s.T(), QuerySlice(s.db, "", nil, &m))
+	var m1 []struct{}
+	assert.Error(s.T(), QuerySlice(s.db, "", nil, &m1))
+	var m2 []*struct{}
+	assert.Error(s.T(), QuerySlice(s.db, "", nil, &m2))
 }
 
 func TestSimpleModel(t *testing.T) {

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 type relationType int
@@ -155,7 +153,6 @@ func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentTy
 	var relField *reflect.StructField
 	for i := 0; i < rve.NumField(); i++ {
 		f := rve.Field(i)
-		spew.Dump(f)
 		if f.Type.AssignableTo(parentType) {
 			relField = &f
 		}
