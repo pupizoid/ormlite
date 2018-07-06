@@ -140,7 +140,7 @@ func (s *hasOneRelationFixture) SetupSuite() {
 		create table one_to_one_rel ( rel_id int references related_model (rowid) );
 		
 		insert into related_model (field) values('test'), ('test 2');
-		insert into one_to_one_rel (rel_id) values(1);
+		insert into one_to_one_rel (rel_id) values(1), (null);
 	`)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -152,7 +152,8 @@ func (s *hasOneRelationFixture) TearDownSuite() {
 
 func (s *hasOneRelationFixture) TestQueryStruct() {
 	var m modelHasOne
-	require.NoError(s.T(), QueryStruct(s.db, "one_to_one_rel", &Options{LoadRelations: true}, &m))
+	require.NoError(s.T(), QueryStruct(s.db, "one_to_one_rel",
+		&Options{LoadRelations: true, Where: map[string]interface{}{"rowid": 1}}, &m))
 	assert.Equal(s.T(), 1, m.ID)
 	require.NotNil(s.T(), m.Related)
 	assert.Equal(s.T(), "test", m.Related.Field)
@@ -164,12 +165,12 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 	require.NoError(s.T(), Upsert(s.db, &m))
 	var mm []*modelHasOne
 	require.NoError(s.T(), QuerySlice(s.db, m.Table(), nil, &mm))
-	assert.Equal(s.T(), 2, len(mm))
+	assert.Equal(s.T(), 3, len(mm))
 	for _, m := range mm {
 		assert.NoError(s.T(), QueryStruct(s.db, m.Table(), &Options{LoadRelations: true, Where: map[string]interface{}{"rowid": m.ID}}, m))
 	}
-	assert.Equal(s.T(), 2, mm[1].Related.ID)
-	assert.Equal(s.T(), "test 2", mm[1].Related.Field)
+	assert.Equal(s.T(), 2, mm[2].Related.ID)
+	assert.Equal(s.T(), "test 2", mm[2].Related.Field)
 	//
 	assert.NoError(s.T(), Delete(s.db, mm[0]))
 }

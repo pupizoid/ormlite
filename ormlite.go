@@ -168,6 +168,10 @@ func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentTy
 }
 
 func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
+	if ri.RefPkValue == nil {
+		return nil
+	}
+	
 	m, ok := rv.Interface().(Model)
 	if !ok {
 		return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
