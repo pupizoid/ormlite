@@ -167,6 +167,89 @@ func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentTy
 				getFieldColumnName(*relField): pkField.Interface()}}, fieldValue.Addr().Interface())
 }
 
+func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
+	m, ok := rv.Interface().(Model)
+	if !ok {
+		return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
+	}
+	if rv.Kind() != reflect.Ptr {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv)
+	}
+
+	if !rv.IsNil() {
+		return errors.New("ormlite: can't load relation to non nil value")
+	}
+
+	refObj := reflect.New(rv.Type().Elem())
+
+	var refPkField string
+	for i := 0; i < rv.Type().Elem().NumField(); i++ {
+		tag := rv.Type().Elem().Field(i).Tag.Get(packageTagName)
+		if lookForSetting(tag, "primary") == "primary" {
+			refPkField = getFieldColumnName(rv.Type().Elem().Field(i))
+		}
+	}
+	if refPkField == "" {
+		return errors.New("ormlite: referenced model does not have primary key")
+	}
+	if err := QueryStruct(db, m.Table(), &Options{Where: map[string]interface{}{refPkField: ri.RefPkValue}}, refObj.Interface()); err != nil {
+		return err
+	}
+	rv.Set(refObj)
+	return nil
+}
+
+func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Value) error {
+	var (
+		rPKField string
+		rPKs     []interface{}
+	)
+	if rv.Kind() != reflect.Slice {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv.Type())
+	}
+	rvt := rv.Type().Elem()
+	if rvt.Kind() != reflect.Ptr {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rvt)
+	}
+	rve := rvt.Elem()
+	if rve.Kind() != reflect.Struct {
+		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rve)
+	}
+	for i := 0; i < rve.NumField(); i++ {
+		t, ok := rve.Field(i).Tag.Lookup(packageTagName)
+		if !ok {
+			continue
+		}
+		if lookForSetting(t, "primary") == "primary" {
+			rPKField = lookForSetting(t, "col")
+			break
+		}
+	}
+
+	var (
+		where string
+		args  []interface{}
+	)
+	if ri.FieldName != "" {
+		where = fmt.Sprintf("where %s = ?", ri.FieldName)
+		args = append(args, pkField.Interface())
+	}
+
+	rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
+	if err != nil {
+		return fmt.Errorf("ormlite: failed to query for relations: %v", err)
+	}
+	for rows.Next() {
+		var rPK int
+		if err := rows.Scan(&rPK); err != nil {
+			return fmt.Errorf("ormlite: failed to scan relation pk: %v", err)
+		}
+		rPKs = append(rPKs, rPK)
+	}
+	return QuerySlice(
+		db, "", &Options{Where: map[string]interface{}{rPKField: rPKs}}, rv.Addr().Interface())
+}
+
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
 func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error {
 	ov := reflect.ValueOf(out)
@@ -248,88 +331,16 @@ Relations:
 	// load relations
 	for ri, rv := range relations {
 		if ri.Type == manyToMany {
-			var (
-				rPKField string
-				rPKs     []interface{}
-			)
-			if rv.Kind() != reflect.Slice {
-				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv.Type())
-			}
-			rvt := rv.Type().Elem()
-			if rvt.Kind() != reflect.Ptr {
-				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rvt)
-			}
-			rve := rvt.Elem()
-			if rve.Kind() != reflect.Struct {
-				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rve)
-			}
-			for i := 0; i < rve.NumField(); i++ {
-				t, ok := rve.Field(i).Tag.Lookup(packageTagName)
-				if !ok {
-					continue
-				}
-				if lookForSetting(t, "primary") == "primary" {
-					rPKField = lookForSetting(t, "col")
-					break
-				}
-			}
-
-			var (
-				where string
-				args  []interface{}
-			)
-			if ri.FieldName != "" {
-				where = fmt.Sprintf("where %s = ?", ri.FieldName)
-				args = append(args, pkField.Interface())
-			}
-
-			rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
-			if err != nil {
-				return fmt.Errorf("ormlite: failed to query for relations: %v", err)
-			}
-			for rows.Next() {
-				var rPK int
-				if err := rows.Scan(&rPK); err != nil {
-					return fmt.Errorf("ormlite: failed to scan relation pk: %v", err)
-				}
-				rPKs = append(rPKs, rPK)
-			}
-			if err := QuerySlice(
-				db, "", &Options{Where: map[string]interface{}{rPKField: rPKs}}, rv.Addr().Interface()); err != nil {
-				return fmt.Errorf("ormlite: failed to query slice: %v", err)
+			if err := loadManyToManyRelation(db, ri, rv, pkField); err != nil {
+				return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
 			}
 		} else if ri.Type == hasOne {
-			m, ok := rv.Interface().(Model)
-			if !ok {
-				return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
+			if err := loadHasOneRelation(db, ri, rv); err != nil {
+				return fmt.Errorf("ormlite: failed to load has-one relation")
 			}
-			if rv.Kind() != reflect.Ptr {
-				return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv)
-			}
-
-			if !rv.IsNil() {
-				return errors.New("ormlite: can't load relation to non nil value")
-			}
-
-			refObj := reflect.New(rv.Type().Elem())
-
-			var refPkField string
-			for i := 0; i < rv.Type().Elem().NumField(); i++ {
-				tag := rv.Type().Elem().Field(i).Tag.Get(packageTagName)
-				if lookForSetting(tag, "primary") == "primary" {
-					refPkField = getFieldColumnName(rv.Type().Elem().Field(i))
-				}
-			}
-			if refPkField == "" {
-				return errors.New("ormlite: referenced model does not have primary key")
-			}
-			if err := QueryStruct(db, m.Table(), &Options{Where: map[string]interface{}{refPkField: ri.RefPkValue}}, refObj.Interface()); err != nil {
-				return err
-			}
-			rv.Set(refObj)
 		} else if ri.Type == hasMany {
 			if err := loadHasManyRelation(db, rv, pkField, reflect.TypeOf(out)); err != nil {
-				return err
+				return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
 			}
 		}
 	}
