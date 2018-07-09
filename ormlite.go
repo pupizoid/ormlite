@@ -171,7 +171,7 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
 	if ri.RefPkValue == nil {
 		return nil
 	}
-	
+
 	m, ok := rv.Interface().(Model)
 	if !ok {
 		return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
@@ -289,21 +289,13 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 
 		if ri := extractRelationInfo(oe.Type().Field(i)); ri != nil {
 			if ri.Type == hasOne {
-				if c := getFieldColumnName(oe.Type().Field(i)); c != "" {
-					columns = append(columns, c)
-				} else {
-					columns = append(columns, strings.ToLower(oe.Type().Field(i).Name))
-				}
+				columns = append(columns, getFieldColumnName(oe.Type().Field(i)))
 				fieldPtrs = append(fieldPtrs, &ri.RefPkValue)
 			}
 			relations[ri] = oe.Field(i)
 			continue
 		}
-		if c := getFieldColumnName(oe.Type().Field(i)); c != "" {
-			columns = append(columns, c)
-		} else {
-			columns = append(columns, strings.ToLower(oe.Type().Field(i).Name))
-		}
+		columns = append(columns, getFieldColumnName(oe.Type().Field(i)))
 		fieldPtrs = append(fieldPtrs, oe.Field(i).Addr().Interface())
 
 		if lookForSetting(tag, "primary") == "primary" {
@@ -393,11 +385,7 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 			continue
 		}
 
-		if c := getFieldColumnName(oss.Field(i)); c != "" {
-			columns = append(columns, c)
-		} else {
-			columns = append(columns, strings.ToLower(oss.Field(i).Name))
-		}
+		columns = append(columns, getFieldColumnName(oss.Field(i)))
 		fi[i] = struct{}{}
 	}
 
@@ -498,11 +486,7 @@ func Upsert(db *sql.DB, m Model) error {
 			if reflect.Zero(et.Field(i).Type).Interface() != ev.Elem().Field(i).Interface() {
 				pk = ev.Elem().Field(i).Interface()
 			}
-			if c := getFieldColumnName(et.Field(i)); c != "" {
-				pkFieldName = c
-			} else {
-				pkFieldName = strings.ToLower(et.Field(i).Name)
-			}
+			pkFieldName = getFieldColumnName(et.Field(i))
 			pkField = ev.Elem().Field(i)
 			continue
 		}
@@ -531,13 +515,8 @@ func Upsert(db *sql.DB, m Model) error {
 			continue
 		}
 
-		if c := getFieldColumnName(et.Field(i)); c != "" {
-			fields = append(fields, c)
-		} else {
-			fields = append(fields, strings.ToLower(et.Field(i).Name))
-		}
+		fields = append(fields, getFieldColumnName(et.Field(i)))
 		values = append(values, ev.Elem().Field(i).Interface())
-
 	}
 
 	if len(fields) == 0 && len(relations) != 0 {
