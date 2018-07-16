@@ -21,17 +21,17 @@ const (
 
 // OrderBy describes ordering rule
 type OrderBy struct {
-	Field string
-	Order string
+	Field string `json:"field"`
+	Order string `json:"order"`
 }
 
 // Options represents query options
 type Options struct {
-	Where         map[string]interface{}
-	Limit         int
-	Offset        int
-	OrderBy       *OrderBy
-	LoadRelations bool
+	Where         map[string]interface{} `json:"where"`
+	Limit         int                    `json:"limit"`
+	Offset        int                    `json:"offset"`
+	OrderBy       *OrderBy               `json:"order_by"`
+	LoadRelations bool                   `json:"load_relations"`
 }
 
 // Model is an interface that represents model of database
