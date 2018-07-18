@@ -334,7 +334,7 @@ Relations:
 			}
 		} else if ri.Type == hasOne {
 			if err := loadHasOneRelation(db, ri, rv); err != nil {
-				return fmt.Errorf("ormlite: failed to load has-one relation")
+				return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
 			}
 		} else if ri.Type == hasMany {
 			if err := loadHasManyRelation(db, rv, pkField, reflect.TypeOf(out)); err != nil {
