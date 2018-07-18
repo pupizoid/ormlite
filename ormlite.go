@@ -115,7 +115,6 @@ func queryWithOptions(db *sql.DB, table string, columns []string, opts *Options)
 			q += fmt.Sprintf(" order by %s %s", opts.OrderBy.Field, opts.OrderBy.Order)
 		}
 	}
-	// spew.Dump(q)
 	return db.Query(q, values...)
 }
 
@@ -175,6 +174,9 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
 	m, ok := rv.Interface().(Model)
 	if !ok {
 		return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
+	}
+	if m == nil {
+		m = reflect.New(rv.Type()).Elem().Interface().(Model)
 	}
 	if rv.Kind() != reflect.Ptr {
 		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv)
