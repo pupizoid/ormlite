@@ -207,7 +207,7 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
 
 func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Value) error {
 	var (
-		rPKField string
+		rPKField, PKField string
 		rPKs     []interface{}
 	)
 	if rv.Kind() != reflect.Slice {
@@ -227,7 +227,8 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 			continue
 		}
 		if lookForSetting(t, "primary") == "primary" {
-			rPKField = lookForSetting(t, "col")
+			rPKField = lookForSetting(t, "ref")
+			PKField = lookForSetting(t, "col")
 			break
 		}
 	}
@@ -240,7 +241,6 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 		where = fmt.Sprintf("where %s = ?", ri.FieldName)
 		args = append(args, pkField.Interface())
 	}
-
 	rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
 	if err != nil {
 		return fmt.Errorf("ormlite: failed to query for relations: %v", err)
@@ -253,7 +253,7 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 		rPKs = append(rPKs, rPK)
 	}
 	return QuerySlice(
-		db, "", &Options{Where: map[string]interface{}{rPKField: rPKs}}, rv.Addr().Interface())
+		db, "", &Options{Where: map[string]interface{}{PKField: rPKs}}, rv.Addr().Interface())
 }
 
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
