@@ -46,6 +46,12 @@ type relationInfo struct {
 	RefPkValue interface{}
 }
 
+type columnInfo struct {
+	RelationInfo relationInfo
+	Name         string
+	Index        int
+}
+
 func lookForSetting(s, setting string) string {
 	pairs := strings.Split(s, ",")
 	for _, pair := range pairs {
@@ -57,6 +63,29 @@ func lookForSetting(s, setting string) string {
 		}
 	}
 	return ""
+}
+
+func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
+	var columns []columnInfo
+
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get(packageTagName)
+		if tag == "-" {
+			continue
+		}
+
+		var ci = columnInfo{Index: i, Name: getFieldColumnName(t.Field(i))}
+
+		if ri := extractRelationInfo(t.Field(i)); ri != nil {
+			ci.RelationInfo = *ri
+			if ri.Type == manyToMany {
+				continue
+			}
+		}
+
+		columns = append(columns, ci)
+	}
+	return columns, nil
 }
 
 func extractRelationInfo(field reflect.StructField) *relationInfo {
@@ -73,6 +102,15 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 			ri.FieldName = c
 		} else {
 			ri.FieldName = strings.ToLower(field.Name)
+		}
+
+		for i := 0; i < field.Type.Elem().NumField(); i++ {
+			if lookForSetting(field.Type.Elem().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
+				ri.RefPkValue = reflect.New(field.Type.Elem().Field(i).Type).Elem().Interface()
+			}
+		}
+		if ri.RefPkValue == nil {
+			return nil // maybe we need to return an error here
 		}
 	} else if strings.Contains(t, "many_to_many") {
 		ri.Type = manyToMany
@@ -208,7 +246,7 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
 func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Value) error {
 	var (
 		rPKField, PKField string
-		rPKs     []interface{}
+		rPKs              []interface{}
 	)
 	if rv.Kind() != reflect.Slice {
 		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv.Type())
@@ -360,6 +398,11 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 		return fmt.Errorf("ormlite: expected slice of pointers, go %v", ose.Kind())
 	}
 
+	oss := ose.Elem()
+	if oss.Kind() != reflect.Struct {
+		return fmt.Errorf("ormlite: expected pointer to struct, got %v", oss)
+	}
+
 	if table == "" {
 		if m, ok := reflect.New(ose.Elem()).Interface().(Model); ok {
 			table = m.Table()
@@ -368,48 +411,73 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 		}
 	}
 
-	oss := ose.Elem()
-	if oss.Kind() != reflect.Struct {
-		return fmt.Errorf("ormlite: expected pointer to struct, got %v", oss)
-	}
-
 	var (
-		columns []string
-		fi      = make(map[int]struct{})
+		colNames        []string
+		colInfoPerEntry [][]columnInfo
 	)
-	for i := 0; i < oss.NumField(); i++ {
-		tag := oss.Field(i).Tag.Get(packageTagName)
-		if tag == "-" {
-			continue
-		}
 
-		if ri := extractRelationInfo(oss.Field(i)); ri != nil {
-			continue
-		}
-
-		columns = append(columns, getFieldColumnName(oss.Field(i)))
-		fi[i] = struct{}{}
+	colInfo, err := getColumnInfo(oss)
+	if err != nil {
+		return fmt.Errorf("ormlite: failed to get column info for type: %v", oss)
 	}
 
-	rows, err := queryWithOptions(db, table, columns, opts)
+	for _, ci := range colInfo {
+		colNames = append(colNames, ci.Name)
+	}
+
+	rows, err := queryWithOptions(db, table, colNames, opts)
 	if err != nil {
 		return fmt.Errorf("ormlite: failed to query slice of structs: %v", err)
 	}
 
 	for rows.Next() {
-		se := reflect.New(oss)
 
-		var fptrs []interface{}
+		var (
+			se           = reflect.New(oss)
+			fptrs        []interface{}
+			entryColInfo = make([]columnInfo, len(colInfo))
+		)
+
+		copy(entryColInfo, colInfo)
+		colInfoPerEntry = append(colInfoPerEntry, entryColInfo)
+
 		for i := 0; i < se.Elem().NumField(); i++ {
-			if _, ok := fi[i]; ok {
-				fptrs = append(fptrs, se.Elem().Field(i).Addr().Interface())
+			for k, ci := range colInfo {
+				if ci.Index == i {
+					if ci.RelationInfo.Type == hasOne {
+						pToPk := &entryColInfo[k].RelationInfo.RefPkValue
+						fptrs = append(fptrs, pToPk)
+					} else {
+						fptrs = append(fptrs, se.Elem().Field(i).Addr().Interface())
+					}
+				}
 			}
 		}
+
 		if err := rows.Scan(fptrs...); err != nil {
 			return fmt.Errorf("ormlite: failed to scan to slice entry: %v", err)
 		}
+
+		// spew.Dump(entryColInfo)
+
 		osv.Set(reflect.Append(osv, se))
 	}
+
+	if opts != nil && opts.LoadRelations {
+		for i := 0; i < osv.Len(); i++ {
+			for _, ci := range colInfoPerEntry[i] {
+				if ci.RelationInfo.Type != noRelation {
+					switch ci.RelationInfo.Type {
+					case hasOne:
+						if err := loadHasOneRelation(db, &ci.RelationInfo, osv.Index(i).Elem().Field(ci.Index)); err != nil {
+							return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return nil
 }
 

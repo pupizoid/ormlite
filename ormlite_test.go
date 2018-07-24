@@ -24,6 +24,22 @@ type simpleModel struct {
 
 func (sm *simpleModel) Table() string { return "simple_model" }
 
+type simpleModelWithRelation struct {
+	ID             int `ormlite:"col=rowid,primary"`
+	NotTaggedField string
+	Related        *simpleModel `ormlite:"has_one,col=related_id"`
+}
+
+func (sm *simpleModelWithRelation) Table() string { return "simple_model_has_one" }
+
+type simpleModelWithCycleRelation struct {
+	ID             int `ormlite:"col=rowid,primary"`
+	NotTaggedField string
+	Related        *simpleModelWithCycleRelation `ormlite:"has_one,col=related_id"`
+}
+
+func (sm *simpleModelWithCycleRelation) Table() string { return "simple_model_has_one_cycle" }
+
 type simpleModelFixture struct {
 	suite.Suite
 	db *sql.DB
@@ -37,12 +53,30 @@ func (s *simpleModelFixture) SetupSuite() {
                 create table simple_model (
                         nottaggedfield text,
                         tagged_field text
-                );
+				);
+				
+				create table simple_model_has_one (
+					nottaggedfield text,
+					related_id int
+				);
+
+				create table simple_model_has_one_cycle (
+					nottaggedfield text,
+					related_id int
+				);
 
                 insert into simple_model(nottaggedfield, tagged_field) values
-                        ('test', 'test tagged'),
-                        ('asdad', 'assddffgh'),
-                        ('1111', '22222');
+					('test', 'test tagged'),
+					('asdad', 'assddffgh'),
+					('1111', '22222');
+						
+				insert into simple_model_has_one(nottaggedfield, related_id) values 
+					('test', null),
+					('test 2 ', 1),
+					('test 3 ', 2);
+
+				insert into simple_model_has_one_cycle(nottaggedfield, related_id) values 
+					('test', 1);
         `)
 	assert.NoError(s.T(), err)
 	s.db = c
@@ -70,6 +104,28 @@ func (s *simpleModelFixture) TestQuerySlice() {
 	var mm []*simpleModel
 	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", nil, &mm))
 	assert.NotEmpty(s.T(), mm)
+}
+
+func (s *simpleModelFixture) TestQuerySliceWithRelations() {
+	var mm []*simpleModelWithRelation
+	assert.NoError(s.T(), QuerySlice(s.db, "simple_model_has_one", &Options{LoadRelations: true}, &mm))
+	assert.NotEmpty(s.T(), mm)
+	assert.Nil(s.T(), mm[0].Related)
+	if assert.NotNil(s.T(), mm[1].Related) {
+		assert.Equal(s.T(), mm[1].Related.TaggedField, "test tagged")
+	}
+	if assert.NotNil(s.T(), mm[2].Related) {
+		assert.Equal(s.T(), mm[2].Related.TaggedField, "assddffgh")
+	}
+}
+
+func (s *simpleModelFixture) TestQuerySliceWithCycleRelation() {
+	var mm []*simpleModelWithCycleRelation
+	assert.NoError(s.T(), QuerySlice(s.db, "simple_model_has_one_cycle", &Options{LoadRelations: true}, &mm))
+	if assert.NotEmpty(s.T(), mm) {
+		assert.NotNil(s.T(), mm[0].Related)
+		assert.Nil(s.T(), mm[0].Related.Related)
+	}
 }
 
 func (s *simpleModelFixture) TestLimit() {
