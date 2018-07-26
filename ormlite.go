@@ -11,7 +11,8 @@ import (
 type relationType int
 
 const (
-	packageTagName = "ormlite"
+	packageTagName       = "ormlite"
+	defaultRelationDepth = 1
 
 	noRelation relationType = 1 << iota
 	hasMany
@@ -25,13 +26,48 @@ type OrderBy struct {
 	Order string `json:"order"`
 }
 
+type Where map[string]interface{}
+
 // Options represents query options
 type Options struct {
-	Where         map[string]interface{} `json:"where"`
-	Limit         int                    `json:"limit"`
-	Offset        int                    `json:"offset"`
-	OrderBy       *OrderBy               `json:"order_by"`
-	LoadRelations bool                   `json:"load_relations"`
+	Where         Where    `json:"where"`
+	Limit         int      `json:"limit"`
+	Offset        int      `json:"offset"`
+	OrderBy       *OrderBy `json:"order_by"`
+	RelationDepth int      `json:"relation_depth"`
+}
+
+// DefaultOptions returns default options for query
+func DefaultOptions() *Options {
+	return &Options{RelationDepth: defaultRelationDepth}
+}
+
+// WithWhere modifies existing options by adding where clause to them
+func WithWhere(options *Options, where Where) *Options {
+	options.Where = where
+	return options
+}
+
+// WithLimit modifies existing options by adding limit parameter to them
+func WithLimit(options *Options, limit int) *Options {
+	options.Limit = limit
+	return options
+}
+
+// WithOffset modifies existing options by adding offset parameter to them.
+// If options does not have positive limit parameter the offset will remain unchanged
+// to avoid sql query correctness.
+func WithOffset(options *Options, offset int) *Options {
+	if options.Limit != 0 {
+		options.Offset = offset
+	}
+	return options
+}
+
+// WithOrder modifies existing options by adding ordering options to them
+func WithOrder(options *Options, by OrderBy) *Options {
+	options.OrderBy = &by
+	return options
 }
 
 // Model is an interface that represents model of database
@@ -78,9 +114,6 @@ func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
 
 		if ri := extractRelationInfo(t.Field(i)); ri != nil {
 			ci.RelationInfo = *ri
-			if ri.Type == manyToMany {
-				continue
-			}
 		} else {
 			ci.RelationInfo = relationInfo{Type: noRelation}
 		}
@@ -176,7 +209,16 @@ func getFieldColumnName(field reflect.StructField) string {
 	return strings.ToLower(field.Name)
 }
 
-func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentType reflect.Type) error {
+func getPrimaryFieldValue(value reflect.Value) (reflect.Value, error) {
+	for k := 0; k < value.NumField(); k++ {
+		if lookForSetting(value.Type().Field(k).Tag.Get(packageTagName), "primary") == "primary" {
+			return value.Field(k), nil
+		}
+	}
+	return reflect.Value{}, fmt.Errorf("related model does not have primary key field")
+}
+
+func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentType reflect.Type, options *Options) error {
 	if fieldValue.Kind() != reflect.Slice {
 		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", fieldValue.Type())
 	}
@@ -200,13 +242,12 @@ func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentTy
 		return errors.New("ormlite: failed to load has many relation since none fields of related type meet parent type")
 	}
 
-	return QuerySlice(
-		db, "", &Options{
-			Where: map[string]interface{}{
-				getFieldColumnName(*relField): pkField.Interface()}}, fieldValue.Addr().Interface())
+	return QuerySlice(db, "",
+		WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
+			*relField): pkField.Interface()}), fieldValue.Addr().Interface())
 }
 
-func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
+func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
 	if ri.RefPkValue == nil {
 		return nil
 	}
@@ -238,14 +279,16 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value) error {
 	if refPkField == "" {
 		return errors.New("ormlite: referenced model does not have primary key")
 	}
-	if err := QueryStruct(db, m.Table(), &Options{Where: map[string]interface{}{refPkField: ri.RefPkValue}}, refObj.Interface()); err != nil {
+	if err := QueryStruct(db, m.Table(), WithWhere(&Options{
+		RelationDepth: options.RelationDepth - 1,
+	}, Where{refPkField: ri.RefPkValue}), refObj.Interface()); err != nil {
 		return err
 	}
 	rv.Set(refObj)
 	return nil
 }
 
-func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Value) error {
+func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Value, options *Options) error {
 	var (
 		rPKField, PKField string
 		rPKs              []interface{}
@@ -293,7 +336,8 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 		rPKs = append(rPKs, rPK)
 	}
 	return QuerySlice(
-		db, "", &Options{Where: map[string]interface{}{PKField: rPKs}}, rv.Addr().Interface())
+		db, "", WithWhere(
+			&Options{RelationDepth: options.RelationDepth - 1}, Where{PKField: rPKs}), rv.Addr().Interface())
 }
 
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
@@ -360,7 +404,7 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 				return fmt.Errorf("ormlite: failed to scan: %v", err)
 			}
 		}
-		if opts == nil || !opts.LoadRelations {
+		if opts == nil || opts.RelationDepth == 0 {
 			return nil
 		}
 	}
@@ -369,15 +413,15 @@ Relations:
 	// load relations
 	for ri, rv := range relations {
 		if ri.Type == manyToMany {
-			if err := loadManyToManyRelation(db, ri, rv, pkField); err != nil {
+			if err := loadManyToManyRelation(db, ri, rv, pkField, opts); err != nil {
 				return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
 			}
 		} else if ri.Type == hasOne {
-			if err := loadHasOneRelation(db, ri, rv); err != nil {
+			if err := loadHasOneRelation(db, ri, rv, opts); err != nil {
 				return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
 			}
 		} else if ri.Type == hasMany {
-			if err := loadHasManyRelation(db, rv, pkField, reflect.TypeOf(out)); err != nil {
+			if err := loadHasManyRelation(db, rv, pkField, reflect.TypeOf(out), opts); err != nil {
 				return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
 			}
 		}
@@ -451,7 +495,7 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 					if ci.RelationInfo.Type == hasOne {
 						pToPk := &entryColInfo[k].RelationInfo.RefPkValue
 						fptrs = append(fptrs, pToPk)
-					} else if ci.RelationInfo.Type == hasMany {
+					} else if ci.RelationInfo.Type == hasMany || ci.RelationInfo.Type == manyToMany {
 						continue
 					} else {
 						fptrs = append(fptrs, se.Elem().Field(i).Addr().Interface())
@@ -467,31 +511,32 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 		osv.Set(reflect.Append(osv, se))
 	}
 
-	if opts != nil && opts.LoadRelations {
+	if opts != nil && opts.RelationDepth != 0 {
 		for i := 0; i < osv.Len(); i++ {
 			for _, ci := range colInfoPerEntry[i] {
 				if ci.RelationInfo.Type != noRelation {
+					var modelValue = osv.Index(i).Elem()
+
 					switch ci.RelationInfo.Type {
 					case hasOne:
-						if err := loadHasOneRelation(db, &ci.RelationInfo, osv.Index(i).Elem().Field(ci.Index)); err != nil {
+						if err := loadHasOneRelation(db, &ci.RelationInfo, modelValue.Field(ci.Index), opts); err != nil {
 							return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
 						}
 					case hasMany:
-						var (
-							pkField    reflect.Value
-							modelValue = osv.Index(i).Elem()
-						)
-
-						for k := 0; k < modelValue.NumField(); k++ {
-							if lookForSetting(modelValue.Type().Field(k).Tag.Get(packageTagName), "primary") == "primary" {
-								pkField = modelValue.Field(k)
-							}
+						pkField, err := getPrimaryFieldValue(modelValue)
+						if err != nil {
+							return fmt.Errorf("ormlite: failed to load has_many relation: %v", err)
 						}
-						if !pkField.IsValid() {
-							return fmt.Errorf("ormlite: failed to load has-many relations: related model does not have primary key field")
-						}
-						if err := loadHasManyRelation(db, modelValue.Field(ci.Index), pkField, osv.Index(i).Type()); err != nil {
+						if err := loadHasManyRelation(db, modelValue.Field(ci.Index), pkField, osv.Index(i).Type(), opts); err != nil {
 							return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
+						}
+					case manyToMany:
+						pkField, err := getPrimaryFieldValue(modelValue)
+						if err != nil {
+							return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
+						}
+						if err := loadManyToManyRelation(db, &ci.RelationInfo, modelValue.Field(ci.Index), pkField, opts); err != nil {
+							return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
 						}
 					}
 				}
@@ -540,7 +585,7 @@ func Delete(db *sql.DB, m Model) error {
 	return nil
 }
 
-// Upsert inserts object into table or updates it's values if it's not exist or udpates it
+// Upsert inserts object into table or updates it's values if it's not exist or updates it
 func Upsert(db *sql.DB, m Model) error {
 	ev := reflect.ValueOf(m)
 	if ev.Kind() != reflect.Ptr {
@@ -657,7 +702,7 @@ Relations:
 	// if there were mtm relations process them
 	for rel, iface := range relations {
 		if rel.Table == "" {
-			return errors.New("ormlite: failed to process relations: not enougth settings")
+			return errors.New("ormlite: failed to process relations: not enough settings")
 		}
 		rv := reflect.ValueOf(iface)
 		if rv.Kind() != reflect.Slice {
