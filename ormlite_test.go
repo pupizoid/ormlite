@@ -11,10 +11,6 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type model struct{}
-
-func (*model) Table() string { return "" }
-
 type simpleModel struct {
 	ID             int `ormlite:"col=rowid,primary"`
 	NotTaggedField string
@@ -262,8 +258,8 @@ func (s *hasManyModelFixture) SetupSuite() {
                 create table has_many_model (name text);
                 create table relating_model (related_id int references has_many_model (rowid));
 
-                insert into has_many_model (name) values ('test');
-                insert into relating_model (related_id) values (1), (1), (1);
+                insert into has_many_model (name) values ('test'), ('asds');
+                insert into relating_model (related_id) values (1), (1), (1), (2), (2);
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -273,11 +269,24 @@ func (s *hasManyModelFixture) TearDownSuite() {
 	s.db.Close()
 }
 
-func (s *hasManyModelFixture) TestQuery() {
+func (s *hasManyModelFixture) TestQueryStruct() {
 	var m hasManyModel
-	require.NoError(s.T(), QueryStruct(s.db, "", &Options{LoadRelations: true}, &m))
+	require.NoError(s.T(), QueryStruct(
+		s.db, "", &Options{LoadRelations: true, Where: map[string]interface{}{"name": "test"}}, &m))
 	assert.NotNil(s.T(), m.Related)
 	assert.Equal(s.T(), 3, len(m.Related))
+}
+
+func (s *hasManyModelFixture) TestQuerySlice() {
+	var mm []*hasManyModel
+	require.NoError(s.T(), QuerySlice(
+		s.db, "", &Options{LoadRelations: true, Where: map[string]interface{}{"name": "asds"}}, &mm))
+	assert.NotEmpty(s.T(), mm)
+	for _, m := range mm {
+		if assert.NotEmpty(s.T(), m.Related) {
+			assert.Equal(s.T(), 2, len(m.Related))
+		}
+	}
 }
 
 func TestHasManyRelation(t *testing.T) {

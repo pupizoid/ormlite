@@ -81,6 +81,8 @@ func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
 			if ri.Type == manyToMany {
 				continue
 			}
+		} else {
+			ci.RelationInfo = relationInfo{Type: noRelation}
 		}
 
 		columns = append(columns, ci)
@@ -422,7 +424,9 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 	}
 
 	for _, ci := range colInfo {
-		colNames = append(colNames, ci.Name)
+		if ci.RelationInfo.Type == noRelation || ci.RelationInfo.Type == hasOne {
+			colNames = append(colNames, ci.Name)
+		}
 	}
 
 	rows, err := queryWithOptions(db, table, colNames, opts)
@@ -447,6 +451,8 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 					if ci.RelationInfo.Type == hasOne {
 						pToPk := &entryColInfo[k].RelationInfo.RefPkValue
 						fptrs = append(fptrs, pToPk)
+					} else if ci.RelationInfo.Type == hasMany {
+						continue
 					} else {
 						fptrs = append(fptrs, se.Elem().Field(i).Addr().Interface())
 					}
@@ -457,8 +463,6 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 		if err := rows.Scan(fptrs...); err != nil {
 			return fmt.Errorf("ormlite: failed to scan to slice entry: %v", err)
 		}
-
-		// spew.Dump(entryColInfo)
 
 		osv.Set(reflect.Append(osv, se))
 	}
@@ -471,6 +475,23 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 					case hasOne:
 						if err := loadHasOneRelation(db, &ci.RelationInfo, osv.Index(i).Elem().Field(ci.Index)); err != nil {
 							return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
+						}
+					case hasMany:
+						var (
+							pkField    reflect.Value
+							modelValue = osv.Index(i).Elem()
+						)
+
+						for k := 0; k < modelValue.NumField(); k++ {
+							if lookForSetting(modelValue.Type().Field(k).Tag.Get(packageTagName), "primary") == "primary" {
+								pkField = modelValue.Field(k)
+							}
+						}
+						if !pkField.IsValid() {
+							return fmt.Errorf("ormlite: failed to load has-many relations: related model does not have primary key field")
+						}
+						if err := loadHasManyRelation(db, modelValue.Field(ci.Index), pkField, osv.Index(i).Type()); err != nil {
+							return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
 						}
 					}
 				}
