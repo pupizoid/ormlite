@@ -57,7 +57,7 @@ type Options struct {
 	Offset        int      
 	OrderBy       *OrderBy 
 	// Load relations to specified depth,
-	// if depth is 0 don't load any relatios
+	// if depth is 0 don't load any relations
 	RelationDepth int      
 }
 ```
@@ -88,6 +88,7 @@ type Model struct {
 ```
 
 `has_one` indicates that this field represents has one relations type to other model.
+
 `col` is an optional parameter to specify custom column name of foreign id of related model.
 
 ### Has Many
@@ -109,8 +110,10 @@ type Model struct {
 }
 ```
 
-`many_to_many` indicates that field represents many to many relation
-`table` should contain mapping table name to retrieve relation information
+`many_to_many` indicates that field represents many to many relation.
+
+`table` should contain mapping table name to retrieve relation information.
+
 `field` should specify column in mapping table that contains foreign key of original model
 
 Also there is a requirement to related model primary key field to contain `ref` setting that specifies column name of it's foreign key in mapping table.
