@@ -241,10 +241,8 @@ func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentTy
 	if relField == nil {
 		return errors.New("ormlite: failed to load has many relation since none fields of related type meet parent type")
 	}
-
-	return QuerySlice(db, "",
-		WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
-			*relField): pkField.Interface()}), fieldValue.Addr().Interface())
+	return QuerySlice(db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
+		*relField): pkField.Interface()}), fieldValue.Addr().Interface())
 }
 
 func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
@@ -279,9 +277,9 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options 
 	if refPkField == "" {
 		return errors.New("ormlite: referenced model does not have primary key")
 	}
-	if err := QueryStruct(db, m.Table(), WithWhere(&Options{
+	if err := QueryStruct(db, WithWhere(&Options{
 		RelationDepth: options.RelationDepth - 1,
-	}, Where{refPkField: ri.RefPkValue}), refObj.Interface()); err != nil {
+	}, Where{refPkField: ri.RefPkValue}), refObj.Interface().(Model)); err != nil {
 		return err
 	}
 	rv.Set(refObj)
@@ -336,28 +334,16 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 		rPKs = append(rPKs, rPK)
 	}
 	return QuerySlice(
-		db, "", WithWhere(
-			&Options{RelationDepth: options.RelationDepth - 1}, Where{PKField: rPKs}), rv.Addr().Interface())
+		db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{PKField: rPKs}),
+		rv.Addr().Interface(),
+	)
 }
 
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
-func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error {
-	ov := reflect.ValueOf(out)
-	if ov.Type().Kind() != reflect.Ptr {
-		return errors.New("ormlite: receiver is not pointer")
-	}
-
-	oe := ov.Elem()
-	if oe.Type().Kind() != reflect.Struct {
-		return fmt.Errorf("ormlite: expected pointer to struct, got %T", oe.Type())
-	}
-
-	if table == "" {
-		if m, ok := out.(Model); ok {
-			table = m.Table()
-		} else {
-			return errors.New("ormlite: empty table with non model")
-		}
+func QueryStruct(db *sql.DB, opts *Options, out Model) error {
+	model := reflect.ValueOf(out).Elem()
+	if model.Type().Kind() != reflect.Struct {
+		return fmt.Errorf("ormlite: expected pointer to struct, got %T", model.Type())
 	}
 
 	var (
@@ -367,25 +353,25 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 		relations = make(map[*relationInfo]reflect.Value)
 	)
 
-	for i := 0; i < oe.NumField(); i++ {
-		tag := oe.Type().Field(i).Tag.Get(packageTagName)
+	for i := 0; i < model.NumField(); i++ {
+		tag := model.Type().Field(i).Tag.Get(packageTagName)
 		if tag == "-" {
 			continue
 		}
 
-		if ri := extractRelationInfo(oe.Type().Field(i)); ri != nil {
+		if ri := extractRelationInfo(model.Type().Field(i)); ri != nil {
 			if ri.Type == hasOne {
-				columns = append(columns, getFieldColumnName(oe.Type().Field(i)))
+				columns = append(columns, getFieldColumnName(model.Type().Field(i)))
 				fieldPtrs = append(fieldPtrs, &ri.RefPkValue)
 			}
-			relations[ri] = oe.Field(i)
+			relations[ri] = model.Field(i)
 			continue
 		}
-		columns = append(columns, getFieldColumnName(oe.Type().Field(i)))
-		fieldPtrs = append(fieldPtrs, oe.Field(i).Addr().Interface())
+		columns = append(columns, getFieldColumnName(model.Type().Field(i)))
+		fieldPtrs = append(fieldPtrs, model.Field(i).Addr().Interface())
 
 		if lookForSetting(tag, "primary") == "primary" {
-			pkField = oe.Field(i)
+			pkField = model.Field(i)
 		}
 	}
 
@@ -394,7 +380,7 @@ func QueryStruct(db *sql.DB, table string, opts *Options, out interface{}) error
 	}
 
 	{
-		rows, err := queryWithOptions(db, table, columns, opts)
+		rows, err := queryWithOptions(db, out.Table(), columns, opts)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to perform query: %v", err)
 		}
@@ -430,41 +416,23 @@ Relations:
 }
 
 // QuerySlice scans rows into the slice of structs
-func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error {
-	ov := reflect.ValueOf(out)
-	if ov.Kind() != reflect.Ptr {
-		return errors.New("ormlite: receiver is not pointer")
-	}
-	osv := ov.Elem()
-	if osv.Kind() != reflect.Slice {
-		return fmt.Errorf("ormlite: expected pointer to slice, got %v", osv.Kind())
-	}
-	ose := osv.Type().Elem()
-	if ose.Kind() != reflect.Ptr {
-		return fmt.Errorf("ormlite: expected slice of pointers, go %v", ose.Kind())
+func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
+
+	slicePtr := reflect.ValueOf(out).Elem()
+	if !slicePtr.Type().Elem().Implements(reflect.TypeOf((*Model)(nil)).Elem()) {
+		return errors.New("ormlite: slice contain type that does not implement Model interface")
 	}
 
-	oss := ose.Elem()
-	if oss.Kind() != reflect.Struct {
-		return fmt.Errorf("ormlite: expected pointer to struct, got %v", oss)
-	}
-
-	if table == "" {
-		if m, ok := reflect.New(ose.Elem()).Interface().(Model); ok {
-			table = m.Table()
-		} else {
-			return errors.New("ormlite: destination does not implement Model interface")
-		}
-	}
+	modelType := slicePtr.Type().Elem().Elem() //
 
 	var (
 		colNames        []string
 		colInfoPerEntry [][]columnInfo
 	)
 
-	colInfo, err := getColumnInfo(oss)
+	colInfo, err := getColumnInfo(modelType)
 	if err != nil {
-		return fmt.Errorf("ormlite: failed to get column info for type: %v", oss)
+		return fmt.Errorf("ormlite: failed to get column info for type: %v", modelType)
 	}
 
 	for _, ci := range colInfo {
@@ -473,7 +441,8 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 		}
 	}
 
-	rows, err := queryWithOptions(db, table, colNames, opts)
+	rows, err := queryWithOptions(
+		db, reflect.New(modelType).Interface().(Model).Table(), colNames, opts)
 	if err != nil {
 		return fmt.Errorf("ormlite: failed to query slice of structs: %v", err)
 	}
@@ -481,7 +450,7 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 	for rows.Next() {
 
 		var (
-			se           = reflect.New(oss)
+			se           = reflect.New(modelType)
 			fptrs        []interface{}
 			entryColInfo = make([]columnInfo, len(colInfo))
 		)
@@ -508,14 +477,14 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 			return fmt.Errorf("ormlite: failed to scan to slice entry: %v", err)
 		}
 
-		osv.Set(reflect.Append(osv, se))
+		slicePtr.Set(reflect.Append(slicePtr, se))
 	}
 
 	if opts != nil && opts.RelationDepth != 0 {
-		for i := 0; i < osv.Len(); i++ {
+		for i := 0; i < slicePtr.Len(); i++ {
 			for _, ci := range colInfoPerEntry[i] {
 				if ci.RelationInfo.Type != noRelation {
-					var modelValue = osv.Index(i).Elem()
+					var modelValue = slicePtr.Index(i).Elem()
 
 					switch ci.RelationInfo.Type {
 					case hasOne:
@@ -527,7 +496,7 @@ func QuerySlice(db *sql.DB, table string, opts *Options, out interface{}) error 
 						if err != nil {
 							return fmt.Errorf("ormlite: failed to load has_many relation: %v", err)
 						}
-						if err := loadHasManyRelation(db, modelValue.Field(ci.Index), pkField, osv.Index(i).Type(), opts); err != nil {
+						if err := loadHasManyRelation(db, modelValue.Field(ci.Index), pkField, slicePtr.Index(i).Type(), opts); err != nil {
 							return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
 						}
 					case manyToMany:

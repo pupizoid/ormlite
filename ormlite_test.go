@@ -18,7 +18,9 @@ type simpleModel struct {
 	OmittedField   string `ormlite:"-"`
 }
 
-func (sm *simpleModel) Table() string { return "simple_model" }
+func (*simpleModel) Table() string { return "simple_model" }
+
+var _ Model = (*simpleModel)(nil)
 
 type simpleModelWithRelation struct {
 	ID             int `ormlite:"col=rowid,primary"`
@@ -90,7 +92,7 @@ func (s *simpleModelFixture) TestCRUD() {
 	assert.NoError(s.T(), Upsert(s.db, &m1))
 
 	var m2 simpleModel
-	assert.NoError(s.T(), QueryStruct(s.db, "simple_model", WithWhere(DefaultOptions(), Where{"rowid": m1.ID}), &m2))
+	assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m1.ID}), &m2))
 	assert.Equal(s.T(), m1, m2)
 
 	assert.NoError(s.T(), Delete(s.db, &m2))
@@ -98,13 +100,13 @@ func (s *simpleModelFixture) TestCRUD() {
 
 func (s *simpleModelFixture) TestQuerySlice() {
 	var mm []*simpleModel
-	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", nil, &mm))
+	assert.NoError(s.T(), QuerySlice(s.db, nil, &mm))
 	assert.NotEmpty(s.T(), mm)
 }
 
 func (s *simpleModelFixture) TestQuerySliceWithRelations() {
 	var mm []*simpleModelWithRelation
-	assert.NoError(s.T(), QuerySlice(s.db, "simple_model_has_one", DefaultOptions(), &mm))
+	assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
 	assert.NotEmpty(s.T(), mm)
 	assert.Nil(s.T(), mm[0].Related)
 	if assert.NotNil(s.T(), mm[1].Related) {
@@ -117,7 +119,7 @@ func (s *simpleModelFixture) TestQuerySliceWithRelations() {
 
 func (s *simpleModelFixture) TestQuerySliceWithCycleRelation() {
 	var mm []*simpleModelWithCycleRelation
-	assert.NoError(s.T(), QuerySlice(s.db, "simple_model_has_one_cycle", DefaultOptions(), &mm))
+	assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
 	if assert.NotEmpty(s.T(), mm) {
 		assert.NotNil(s.T(), mm[0].Related)
 		assert.Nil(s.T(), mm[0].Related.Related)
@@ -126,13 +128,13 @@ func (s *simpleModelFixture) TestQuerySliceWithCycleRelation() {
 
 func (s *simpleModelFixture) TestLimit() {
 	var mm []*simpleModel
-	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", WithLimit(DefaultOptions(), 1), &mm))
+	assert.NoError(s.T(), QuerySlice(s.db, WithLimit(DefaultOptions(), 1), &mm))
 	assert.Equal(s.T(), 1, len(mm))
 }
 
 func (s *simpleModelFixture) TestOffset() {
 	var mm []*simpleModel
-	assert.NoError(s.T(), QuerySlice(s.db, "simple_model", WithOffset(WithLimit(DefaultOptions(), 2), 1), &mm))
+	assert.NoError(s.T(), QuerySlice(s.db, WithOffset(WithLimit(DefaultOptions(), 2), 1), &mm))
 	assert.NotEmpty(s.T(), mm)
 	for _, m := range mm {
 		assert.NotEqual(s.T(), 1, m.ID, "First row shouldn't be returned since offset")
@@ -141,23 +143,9 @@ func (s *simpleModelFixture) TestOffset() {
 
 func (s *simpleModelFixture) TestOrderBy() {
 	var mm []*simpleModel
-	require.NoError(s.T(), QuerySlice(s.db, "simple_model", WithOrder(DefaultOptions(), OrderBy{Field: "rowid", Order: "desc"}), &mm))
+	require.NoError(s.T(), QuerySlice(s.db, WithOrder(DefaultOptions(), OrderBy{Field: "rowid", Order: "desc"}), &mm))
 	assert.NotEmpty(s.T(), mm)
 	assert.NotEqual(s.T(), 1, mm[0].ID)
-}
-
-func (s *simpleModelFixture) TestInvalidModels() {
-	var m struct {
-		ID int
-	}
-	assert.Error(s.T(), QueryStruct(s.db, "", nil, m))
-	assert.Error(s.T(), QueryStruct(s.db, "", nil, &m))
-	assert.Error(s.T(), QuerySlice(s.db, "", nil, m))
-	assert.Error(s.T(), QuerySlice(s.db, "", nil, &m))
-	var m1 []struct{}
-	assert.Error(s.T(), QuerySlice(s.db, "", nil, &m1))
-	var m2 []*struct{}
-	assert.Error(s.T(), QuerySlice(s.db, "", nil, &m2))
 }
 
 func TestSimpleModel(t *testing.T) {
@@ -204,7 +192,7 @@ func (s *hasOneRelationFixture) TearDownSuite() {
 
 func (s *hasOneRelationFixture) TestQueryStruct() {
 	var m modelHasOne
-	require.NoError(s.T(), QueryStruct(s.db, "one_to_one_rel", WithWhere(DefaultOptions(), Where{"rowid": 1}), &m))
+	require.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": 1}), &m))
 	assert.Equal(s.T(), 1, m.ID)
 	require.NotNil(s.T(), m.Related)
 	assert.Equal(s.T(), "test", m.Related.Field)
@@ -215,10 +203,10 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 	var m = modelHasOne{Related: &relatedModel{ID: 2, Field: "lol"}}
 	require.NoError(s.T(), Upsert(s.db, &m))
 	var mm []*modelHasOne
-	require.NoError(s.T(), QuerySlice(s.db, m.Table(), nil, &mm))
+	require.NoError(s.T(), QuerySlice(s.db, nil, &mm))
 	assert.Equal(s.T(), 3, len(mm))
 	for _, m := range mm {
-		assert.NoError(s.T(), QueryStruct(s.db, m.Table(), WithWhere(DefaultOptions(), Where{"rowid": m.ID}), m))
+		assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m.ID}), m))
 	}
 	assert.Equal(s.T(), 2, mm[2].Related.ID)
 	assert.Equal(s.T(), "test 2", mm[2].Related.Field)
@@ -270,14 +258,14 @@ func (s *hasManyModelFixture) TearDownSuite() {
 
 func (s *hasManyModelFixture) TestQueryStruct() {
 	var m hasManyModel
-	require.NoError(s.T(), QueryStruct(s.db, "", WithWhere(DefaultOptions(), Where{"name": "test"}), &m))
+	require.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"name": "test"}), &m))
 	assert.NotNil(s.T(), m.Related)
 	assert.Equal(s.T(), 3, len(m.Related))
 }
 
 func (s *hasManyModelFixture) TestQuerySlice() {
 	var mm []*hasManyModel
-	require.NoError(s.T(), QuerySlice(s.db, "", WithWhere(DefaultOptions(), Where{"name": "asds"}), &mm))
+	require.NoError(s.T(), QuerySlice(s.db, WithWhere(DefaultOptions(), Where{"name": "asds"}), &mm))
 	assert.NotEmpty(s.T(), mm)
 	for _, m := range mm {
 		if assert.NotEmpty(s.T(), m.Related) {
@@ -327,14 +315,14 @@ func (s *manyToManyRelationFixture) TearDownSuite() {
 func (s *manyToManyRelationFixture) TestQueryStruct() {
 	var m modelManyToMany
 	assert.NoError(s.T(), QueryStruct(
-		s.db, "mtm_model", WithWhere(DefaultOptions(), Where{"name": "name"}), &m))
+		s.db, WithWhere(DefaultOptions(), Where{"name": "name"}), &m))
 	assert.NotEmpty(s.T(), m.Related)
 	assert.Equal(s.T(), 2, len(m.Related))
 }
 
 func (s *manyToManyRelationFixture) TestQuerySlice() {
 	var mm []*modelManyToMany
-	require.NoError(s.T(), QuerySlice(s.db, new(modelManyToMany).Table(), DefaultOptions(), &mm))
+	require.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
 	for _, m := range mm {
 		assert.NotEmpty(s.T(), m.Related)
 		assert.Equal(s.T(), 2, len(m.Related))
@@ -349,7 +337,7 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	}
 	require.NoError(s.T(), Upsert(s.db, &m))
 	var m1 modelManyToMany
-	assert.NoError(s.T(), QueryStruct(s.db, "", WithWhere(DefaultOptions(), Where{"rowid": m.ID}), &m1))
+	assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m.ID}), &m1))
 	assert.NotEmpty(s.T(), m1.Related)
 	for _, r := range m1.Related {
 		assert.NotEqual(s.T(), 1, r.ID)
@@ -404,7 +392,7 @@ func (s *modelMultiTableFixture) TearDownSuite() {
 
 func (s *modelMultiTableFixture) TestQuery() {
 	var m modelMultiTable
-	require.NoError(s.T(), QueryStruct(s.db, "", DefaultOptions(), &m))
+	require.NoError(s.T(), QueryStruct(s.db, DefaultOptions(), &m))
 	assert.Equal(s.T(), 3, len(m.One))
 	assert.Equal(s.T(), 2, len(m.Two))
 }
