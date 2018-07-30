@@ -124,7 +124,7 @@ func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
 }
 
 func extractRelationInfo(field reflect.StructField) *relationInfo {
-	var ri = relationInfo{Type: noRelation}
+	var info = relationInfo{Type: noRelation}
 
 	t, ok := field.Tag.Lookup(packageTagName)
 	if !ok {
@@ -132,31 +132,27 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 	}
 
 	if strings.Contains(t, "has_one") {
-		ri.Type = hasOne
-		if c := getFieldColumnName(field); c != "" {
-			ri.FieldName = c
-		} else {
-			ri.FieldName = strings.ToLower(field.Name)
-		}
+		info.Type = hasOne
+		info.FieldName = getFieldColumnName(field)
 
 		for i := 0; i < field.Type.Elem().NumField(); i++ {
 			if lookForSetting(field.Type.Elem().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
-				ri.RefPkValue = reflect.New(field.Type.Elem().Field(i).Type).Elem().Interface()
+				info.RefPkValue = reflect.New(field.Type.Elem().Field(i).Type).Elem().Interface()
 			}
 		}
-		if ri.RefPkValue == nil {
+		if info.RefPkValue == nil {
 			return nil // maybe we need to return an error here
 		}
 	} else if strings.Contains(t, "many_to_many") {
-		ri.Type = manyToMany
-		ri.Table = lookForSetting(t, "table")
-		ri.FieldName = lookForSetting(t, "field")
+		info.Type = manyToMany
+		info.Table = lookForSetting(t, "table")
+		info.FieldName = lookForSetting(t, "field")
 	} else if strings.Contains(t, "has_many") {
-		ri.Type = hasMany
+		info.Type = hasMany
 	} else {
 		return nil
 	}
-	return &ri
+	return &info
 }
 
 func queryWithOptions(db *sql.DB, table string, columns []string, opts *Options) (*sql.Rows, error) {
@@ -250,19 +246,9 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options 
 		return nil
 	}
 
-	m, ok := rv.Interface().(Model)
+	_, ok := rv.Interface().(Model)
 	if !ok {
 		return fmt.Errorf("ormlite: incorrect field value of one_to_one relation, expected ormlite.Model")
-	}
-	if m == nil {
-		m = reflect.New(rv.Type()).Elem().Interface().(Model)
-	}
-	if rv.Kind() != reflect.Ptr {
-		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", rv)
-	}
-
-	if !rv.IsNil() {
-		return errors.New("ormlite: can't load relation to non nil value")
 	}
 
 	refObj := reflect.New(rv.Type().Elem())
