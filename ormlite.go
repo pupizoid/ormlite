@@ -590,16 +590,19 @@ func Upsert(db *sql.DB, m Model) error {
 					return fmt.Errorf("ormlite: one-to-one relations supports only pointer to struct, not %T", ev.Elem().Field(i).Interface())
 				}
 				var refPkFieldValue interface{}
-				for i := 0; i < refValue.Elem().NumField(); i++ {
-					if lookForSetting(refValue.Elem().Type().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
-						refPkFieldValue = refValue.Elem().Field(i).Interface()
+				for i := 0; i < refValue.Type().Elem().NumField(); i++ {
+					if lookForSetting(refValue.Type().Elem().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
+						if refValue.IsValid() && refValue.Elem().IsValid() {
+							refPkFieldValue = refValue.Elem().Field(i).Interface()
+						}
 					}
 				}
-				if refPkFieldValue == nil {
+				pkField := getFieldColumnName(et.Field(i))
+				if pkField == "" {
 					return errors.New("ormlite: one-to-one related struct don't have primary key")
 				}
 				values = append(values, refPkFieldValue)
-				fields = append(fields, getFieldColumnName(et.Field(i)))
+				fields = append(fields, pkField)
 			case manyToMany:
 				relations[rInfo] = ev.Elem().Field(i).Interface()
 			}
@@ -631,7 +634,6 @@ func Upsert(db *sql.DB, m Model) error {
 				fmt.Sprintf("update %s set %s where %s = ?", m.Table(), strings.Join(fieldPairs, ","), pkFieldName),
 			)
 		}
-
 		res, err := db.Exec(query, values...)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to exec: %v", err)

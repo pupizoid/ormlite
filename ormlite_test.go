@@ -96,6 +96,14 @@ func (s *simpleModelFixture) TestCRUD() {
 	assert.Equal(s.T(), m1, m2)
 
 	assert.NoError(s.T(), Delete(s.db, &m2))
+
+	var m3 = simpleModelWithRelation{NotTaggedField: "some not tagged field"}
+	assert.NoError(s.T(), Upsert(s.db, &m3))
+	// test foreign key is set to null
+	var m4 simpleModelWithRelation
+	assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m3.ID}), &m4))
+	assert.Nil(s.T(), m4.Related)
+
 }
 
 func (s *simpleModelFixture) TestQuerySlice() {
