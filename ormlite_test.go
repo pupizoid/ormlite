@@ -307,7 +307,7 @@ func (s *manyToManyRelationFixture) SetupSuite() {
                 create table related_model ( field text );
                 create table mtm_model ( name text );
 
-                create table mtm (m_id int references mtm_model (rowid), rel_id int references related_model (rowid));
+                create table mtm (m_id int not null references mtm_model (rowid), rel_id int not null references related_model (rowid));
                 insert into related_model (field) values('test 1'), ('test 2'), ('test 3');
                 insert into mtm_model(name) values ('name');
                 insert into mtm(m_id, rel_id) values(1, 1), (1, 2);
@@ -360,7 +360,15 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	}
 	assert.Equal(s.T(), 3, c)
 	assert.NoError(s.T(), Delete(s.db, &m2))
+	// insert new model
+	var m3 = modelManyToMany{
+		Name:    "new model",
+		Related: []*relatedModel{{ID: 3}},
+	}
+	assert.NoError(s.T(), Upsert(s.db, &m3))
+	assert.Equal(s.T(), 2, m3.ID)
 }
+
 func TestManyToManyRelation(t *testing.T) {
 	suite.Run(t, new(manyToManyRelationFixture))
 }

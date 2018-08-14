@@ -652,6 +652,7 @@ func Upsert(db *sql.DB, m Model) error {
 				return errors.New("ormlite: insert functionality can be used only for models with int primary keys")
 			}
 			pkField.SetInt(iid)
+			pk = iid
 		}
 	}
 
