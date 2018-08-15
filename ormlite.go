@@ -1,16 +1,20 @@
 package ormlite
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
 type relationType int
 
 const (
+	queryTimeout = time.Second * 5
+
 	packageTagName       = "ormlite"
 	defaultRelationDepth = 1
 
@@ -155,7 +159,7 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 	return &info
 }
 
-func queryWithOptions(db *sql.DB, table string, columns []string, opts *Options) (*sql.Rows, error) {
+func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []string, opts *Options) (*sql.Rows, error) {
 	var values []interface{}
 	q := fmt.Sprintf("select %s from %s", strings.Join(columns, ","), table)
 	if opts != nil {
@@ -184,7 +188,7 @@ func queryWithOptions(db *sql.DB, table string, columns []string, opts *Options)
 			q += fmt.Sprintf(" order by %s %s", opts.OrderBy.Field, opts.OrderBy.Order)
 		}
 	}
-	return db.Query(q, values...)
+	return db.QueryContext(ctx, q, values...)
 }
 
 func getFieldColumnName(field reflect.StructField) string {
@@ -214,7 +218,7 @@ func getPrimaryFieldValue(value reflect.Value) (reflect.Value, error) {
 	return reflect.Value{}, fmt.Errorf("related model does not have primary key field")
 }
 
-func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentType reflect.Type, options *Options) error {
+func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue, pkField reflect.Value, parentType reflect.Type, options *Options) error {
 	if fieldValue.Kind() != reflect.Slice {
 		return fmt.Errorf("ormlite: can't load relations: wrong field type: %v", fieldValue.Type())
 	}
@@ -237,11 +241,11 @@ func loadHasManyRelation(db *sql.DB, fieldValue, pkField reflect.Value, parentTy
 	if relField == nil {
 		return errors.New("ormlite: failed to load has many relation since none fields of related type meet parent type")
 	}
-	return QuerySlice(db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
+	return QuerySliceContext(ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
 		*relField): pkField.Interface()}), fieldValue.Addr().Interface())
 }
 
-func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
+func loadHasOneRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
 	if ri.RefPkValue == nil {
 		return nil
 	}
@@ -263,7 +267,7 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options 
 	if refPkField == "" {
 		return errors.New("ormlite: referenced model does not have primary key")
 	}
-	if err := QueryStruct(db, WithWhere(&Options{
+	if err := QueryStructContext(ctx, db, WithWhere(&Options{
 		RelationDepth: options.RelationDepth - 1,
 	}, Where{refPkField: ri.RefPkValue}), refObj.Interface().(Model)); err != nil {
 		return err
@@ -272,7 +276,7 @@ func loadHasOneRelation(db *sql.DB, ri *relationInfo, rv reflect.Value, options 
 	return nil
 }
 
-func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Value, options *Options) error {
+func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv, pkField reflect.Value, options *Options) error {
 	var (
 		rPKField, PKField string
 		rPKs              []interface{}
@@ -308,7 +312,7 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 		where = fmt.Sprintf("where %s = ?", ri.FieldName)
 		args = append(args, pkField.Interface())
 	}
-	rows, err := db.Query(fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
 	if err != nil {
 		return fmt.Errorf("ormlite: failed to query for relations: %v", err)
 	}
@@ -319,14 +323,21 @@ func loadManyToManyRelation(db *sql.DB, ri *relationInfo, rv, pkField reflect.Va
 		}
 		rPKs = append(rPKs, rPK)
 	}
-	return QuerySlice(
-		db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{PKField: rPKs}),
+	return QuerySliceContext(
+		ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{PKField: rPKs}),
 		rv.Addr().Interface(),
 	)
 }
 
 // QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
 func QueryStruct(db *sql.DB, opts *Options, out Model) error {
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+	return QueryStructContext(ctx, db, opts, out)
+}
+
+// QueryStruct looks up for rows in given table and scans it to provided struct or slice of structs
+func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Model) error {
 	model := reflect.ValueOf(out).Elem()
 	if model.Type().Kind() != reflect.Struct {
 		return fmt.Errorf("ormlite: expected pointer to struct, got %T", model.Type())
@@ -366,7 +377,7 @@ func QueryStruct(db *sql.DB, opts *Options, out Model) error {
 	}
 
 	{
-		rows, err := queryWithOptions(db, out.Table(), columns, opts)
+		rows, err := queryWithOptions(ctx, db, out.Table(), columns, opts)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to perform query: %v", err)
 		}
@@ -385,15 +396,15 @@ Relations:
 	// load relations
 	for ri, rv := range relations {
 		if ri.Type == manyToMany {
-			if err := loadManyToManyRelation(db, ri, rv, pkField, opts); err != nil {
+			if err := loadManyToManyRelation(ctx, db, ri, rv, pkField, opts); err != nil {
 				return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
 			}
 		} else if ri.Type == hasOne {
-			if err := loadHasOneRelation(db, ri, rv, opts); err != nil {
+			if err := loadHasOneRelation(ctx, db, ri, rv, opts); err != nil {
 				return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
 			}
 		} else if ri.Type == hasMany {
-			if err := loadHasManyRelation(db, rv, pkField, reflect.TypeOf(out), opts); err != nil {
+			if err := loadHasManyRelation(ctx, db, rv, pkField, reflect.TypeOf(out), opts); err != nil {
 				return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
 			}
 		}
@@ -403,6 +414,13 @@ Relations:
 
 // QuerySlice scans rows into the slice of structs
 func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+	return QuerySliceContext(ctx, db, opts, out)
+}
+
+// QuerySliceContext scans rows into the slice of structs with given context
+func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out interface{}) error {
 
 	slicePtr := reflect.ValueOf(out).Elem()
 	if !slicePtr.Type().Elem().Implements(reflect.TypeOf((*Model)(nil)).Elem()) {
@@ -428,7 +446,7 @@ func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
 	}
 
 	rows, err := queryWithOptions(
-		db, reflect.New(modelType).Interface().(Model).Table(), colNames, opts)
+		ctx, db, reflect.New(modelType).Interface().(Model).Table(), colNames, opts)
 	if err != nil {
 		return fmt.Errorf("ormlite: failed to query slice of structs: %v", err)
 	}
@@ -474,7 +492,7 @@ func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
 
 					switch ci.RelationInfo.Type {
 					case hasOne:
-						if err := loadHasOneRelation(db, &ci.RelationInfo, modelValue.Field(ci.Index), opts); err != nil {
+						if err := loadHasOneRelation(ctx, db, &ci.RelationInfo, modelValue.Field(ci.Index), opts); err != nil {
 							return fmt.Errorf("ormlite: failed to load has-one relation: %v", err)
 						}
 					case hasMany:
@@ -482,7 +500,7 @@ func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
 						if err != nil {
 							return fmt.Errorf("ormlite: failed to load has_many relation: %v", err)
 						}
-						if err := loadHasManyRelation(db, modelValue.Field(ci.Index), pkField, slicePtr.Index(i).Type(), opts); err != nil {
+						if err := loadHasManyRelation(ctx, db, modelValue.Field(ci.Index), pkField, slicePtr.Index(i).Type(), opts); err != nil {
 							return fmt.Errorf("ormlite: failed to load has-many relation: %v", err)
 						}
 					case manyToMany:
@@ -490,7 +508,7 @@ func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
 						if err != nil {
 							return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
 						}
-						if err := loadManyToManyRelation(db, &ci.RelationInfo, modelValue.Field(ci.Index), pkField, opts); err != nil {
+						if err := loadManyToManyRelation(ctx, db, &ci.RelationInfo, modelValue.Field(ci.Index), pkField, opts); err != nil {
 							return fmt.Errorf("ormlite: failed to load many-to-many relation: %v", err)
 						}
 					}
@@ -525,9 +543,11 @@ func Delete(db *sql.DB, m Model) error {
 		columns = append(columns, fmt.Sprintf("%s = ?", getFieldColumnName(s.Type().Field(i))))
 		values = append(values, s.Field(i).Interface())
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
 
 	query := fmt.Sprintf("delete from %s where %s", m.Table(), strings.Join(columns, " and "))
-	res, err := db.Exec(query, values...)
+	res, err := db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return fmt.Errorf("ormlite: failed to exec query: %v", err)
 	}
@@ -540,8 +560,12 @@ func Delete(db *sql.DB, m Model) error {
 	return nil
 }
 
-// Upsert inserts object into table or updates it's values if it's not exist or updates it
 func Upsert(db *sql.DB, m Model) error {
+	return UpsertContext(context.Background(), db, m)
+}
+
+// Upsert inserts object into table or updates it's values if it's not exist or updates it
+func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 	ev := reflect.ValueOf(m)
 	if ev.Kind() != reflect.Ptr {
 		return fmt.Errorf("ormlite: model expected to be ptr, %v given", ev.Kind())
@@ -634,7 +658,7 @@ func Upsert(db *sql.DB, m Model) error {
 				fmt.Sprintf("update %s set %s where %s = ?", m.Table(), strings.Join(fieldPairs, ","), pkFieldName),
 			)
 		}
-		res, err := db.Exec(query, values...)
+		res, err := db.ExecContext(ctx, query, values...)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to exec: %v", err)
 		}
@@ -699,7 +723,7 @@ Relations:
 			args = append(args, pkField.Interface())
 		}
 
-		rows, err := db.Query(fmt.Sprintf("select %s from %s %s", refFieldName, rel.Table, where), args...)
+		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", refFieldName, rel.Table, where), args...)
 		if err != nil {
 			return fmt.Errorf("ormlite: failed to load mtm relations: %v", err)
 		}
@@ -725,7 +749,7 @@ Relations:
 							fields = fmt.Sprintf("%s, %s", rel.FieldName, refFieldName)
 							values = append([]interface{}{pk}, values...)
 						}
-						res, err := db.Exec(
+						res, err := db.ExecContext(ctx,
 							fmt.Sprintf(
 								"insert into %s(%s) values(%s)", rel.Table, fields, strings.Trim(strings.Repeat("?,", len(values)), ",")), values...)
 						if err != nil {
@@ -749,7 +773,7 @@ Relations:
 					fields += fmt.Sprintf(" and %s = ?", rel.FieldName)
 					values = append(values, pk)
 				}
-				res, err := db.Exec(
+				res, err := db.ExecContext(ctx,
 					fmt.Sprintf(
 						"delete from %s where %s", rel.Table, fields), values...)
 				if err != nil {
