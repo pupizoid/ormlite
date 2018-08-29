@@ -387,7 +387,7 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 				return fmt.Errorf("ormlite: failed to scan: %v", err)
 			}
 		}
-		if opts == nil || opts.RelationDepth == 0 {
+		if opts == nil || opts.RelationDepth < 1 {
 			return nil
 		}
 	}

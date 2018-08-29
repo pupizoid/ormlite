@@ -174,6 +174,13 @@ type modelHasOne struct {
 
 func (m *modelHasOne) Table() string { return "one_to_one_rel" }
 
+type modelHasOneCycle struct {
+	ID      int               `ormlite:"col=rowid,primary"`
+	Related *modelHasOneCycle `ormlite:"has_one,col=rel_id"`
+}
+
+func (m *modelHasOneCycle) Table() string { return "one_to_one_cycle_rel" }
+
 type hasOneRelationFixture struct {
 	suite.Suite
 	db *sql.DB
@@ -186,9 +193,11 @@ func (s *hasOneRelationFixture) SetupSuite() {
 	_, err = c.Exec(`
                 create table related_model ( field text );
                 create table one_to_one_rel ( rel_id int references related_model (rowid) );
+				create table one_to_one_cycle_rel (rel_id int references one_to_one_cycle_rel (rowid));
 
                 insert into related_model (field) values('test'), ('test 2');
                 insert into one_to_one_rel (rel_id) values(1), (null);
+				insert into one_to_one_cycle_rel (rel_id) values (1);
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -220,6 +229,18 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 	assert.Equal(s.T(), "test 2", mm[2].Related.Field)
 	//
 	assert.NoError(s.T(), Delete(s.db, mm[0]))
+}
+
+func (s *hasOneRelationFixture) TestRelationalDepth() {
+	var cm modelHasOneCycle
+	require.NoError(s.T(), QueryStruct(s.db, &Options{RelationDepth: 2}, &cm))
+	assert.NotNil(s.T(), cm.Related.Related)
+	assert.Nil(s.T(), cm.Related.Related.Related)
+	//
+	var cms []*modelHasOneCycle
+	require.NoError(s.T(), QuerySlice(s.db, &Options{RelationDepth: 2}, &cms))
+	assert.NotNil(s.T(), cms[0].Related.Related)
+	assert.Nil(s.T(), cms[0].Related.Related.Related)
 }
 
 func TestHasOneRelation(t *testing.T) {
@@ -426,6 +447,11 @@ func (s *modelMultiTableFixture) TestUpsert() {
 		assert.NoError(s.T(), rows.Scan(&c))
 	}
 	assert.Equal(s.T(), 3, c)
+	// test nullable multi table
+	m1 := modelMultiTable{
+		One: []*relatedModel{{ID: 1}},
+	}
+	require.NoError(s.T(), Upsert(s.db, &m1))
 }
 
 func (s *modelMultiTableFixture) TestDelete() {
