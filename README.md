@@ -12,10 +12,10 @@ type Model interface {
     Table() string
 }
 ```
-This package mainly operates with a Model interface. Though there is an ability to load data specifing custom table, Model is used to process relations. 
+This package operates models which are described by `Model` interface. We call any entry a model if it's a struct and has a table where data is stored.
 
 ## CRUD
-This package provides a bunch of funcs to allow you create, read, update and delete data.
+This package provides a bunch of functions to allow you create, read, update and delete data.
   
 ### QueryStruct
 Loads data from table and scans it into provided struct. If query was too broad to load more than one rows, the latest of them will be scanned. Also this function supports loading relations which will be described below.
@@ -33,14 +33,14 @@ err := QueryStruct(db, "", nil, &s)
 
 Let's describe some tags used in example struct:
 - `col` - let you specify custom column name to be scanned to the field
-- `primary` - indicates model primary key, it's basicly used when saving model
+- `primary` - indicates model primary key, it's basically used when saving model
 - `-` - hide field for package so it won't be affected at any kind
 
 ### QuerySlice
-This is very similar to QueryStruct except that it loads multiple rows in a slice. Also QuerySlice for now does not support loading relations due cyclic dependency.
+This is very similar to QueryStruct except that it loads multiple rows in a slice.
 
 ### Upsert
-This function is used to save or update existing model, if model has `primary` field and it's value is zero - this model will be inserted to the model's table. Otherwise model's row will be updated accordint it's current values. This function also supports relations except `hasMany`.
+This function is used to save or update existing model, if model has `primary` field and it's value is zero - this model will be inserted to the model's table. Otherwise model's row will be updated according it's current values. This function also supports relations except `hasMany`.
 ```go
 err := Upsert(db, &s)
 ```
@@ -51,14 +51,14 @@ This function... yea, it deletes model from database, using all it's fields exce
 
 ```go
 type Options struct {
-	// Add where clause to query
-	Where         Where    
-	Limit         int      
-	Offset        int      
-	OrderBy       *OrderBy 
-	// Load relations to specified depth,
-	// if depth is 0 don't load any relations
-	RelationDepth int      
+   // Add where clause to query
+   Where         Where    
+   Limit         int      
+   Offset        int      
+   OrderBy       *OrderBy 
+   // Load relations to specified depth,
+   // if depth is 0 don't load any relations
+   RelationDepth int      
 }
 ```
 
@@ -69,6 +69,12 @@ If you already have variable containing Options, you can extend them with additi
 - WithOffset
 - WithOrder
 - WithWhere
+
+For example:
+
+```go
+opts := ormlite.WithWhere(ormlite.DefaultOptions(), ormlite.Where{"id": 1})
+```
 
 ## Relations
 
@@ -83,7 +89,7 @@ Since you can control depth of loaded relations, there is no need to be afraid o
 
 ```go
 type Model struct {
-	Related ormlite.Model `ormlite:"has_one,col=related_model_id"`
+   Related ormlite.Model `ormlite:"has_one,col=related_model_id"`
 }
 ```
 
@@ -95,7 +101,7 @@ type Model struct {
 
 ```go
 type Model struct {
-	Related []ormlite.Model `ormlite:"has_many"`
+   Related []ormlite.Model `ormlite:"has_many"`
 }
 ```
 
@@ -106,7 +112,7 @@ type Model struct {
  
  ```go
 type Model struct {
-	Related []ormlite.Model `ormlite:"many_to_many,table=mapping_table,field=model_id"`
+   Related []ormlite.Model `ormlite:"many_to_many,table=mapping_table,field=model_id"`
 }
 ```
 
@@ -114,6 +120,10 @@ type Model struct {
 
 `table` should contain mapping table name to retrieve relation information.
 
-`field` should specify column in mapping table that contains foreign key of original model
+`field` should specify column in mapping table that has foreign key of original model
 
 Also there is a requirement to related model primary key field to contain `ref` setting that specifies column name of it's foreign key in mapping table.
+
+### Examples
+
+See tests.
