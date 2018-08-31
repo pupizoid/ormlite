@@ -45,7 +45,9 @@ This function is used to save or update existing model, if model has `primary` f
 err := Upsert(db, &s)
 ```
 ### Delete
-This function... yea, it deletes model from database, using all it's fields except relational as identification condition. So if you loaded any model and changed it and then will call Delete nothing will hapen.
+This function... yea, it deletes model from database using it's primary key value. If model does not have primary key or it has zero value an error will ne returned.
+Since sometimes it's useful to know that delete operation is really took place in database, function will check number of affected rows and return a special `ErrNoRowsAffected`
+if it's not positive.
 
 ## Options
 

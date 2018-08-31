@@ -103,7 +103,13 @@ func (s *simpleModelFixture) TestCRUD() {
 	var m4 simpleModelWithRelation
 	assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m3.ID}), &m4))
 	assert.Nil(s.T(), m4.Related)
+}
 
+func (s *simpleModelFixture) TestDeleteMissing() {
+	err := Delete(s.db, &simpleModel{ID: 4})
+	if assert.Error(s.T(), err) {
+		assert.Equal(s.T(), ErrNoRowsAffected, err)
+	}
 }
 
 func (s *simpleModelFixture) TestQuerySlice() {
@@ -460,4 +466,25 @@ func (s *modelMultiTableFixture) TestDelete() {
 
 func TestMultiTableModel(t *testing.T) {
 	suite.Run(t, new(modelMultiTableFixture))
+}
+
+type modelWithoutPK struct {
+	ID int `ormlite:"col=rowid"`
+}
+
+func (*modelWithoutPK) Table() string { return "" }
+
+type modelWithZeroPK struct {
+	ID int `ormlite:"primary,col=rowid"`
+}
+
+func (*modelWithZeroPK) Table() string { return "" }
+
+func TestWrongModels(t *testing.T) {
+	t.Run("TestDeleteModelWithoutPK", func(t *testing.T) {
+		assert.Error(t, Delete(nil, &modelWithoutPK{1}))
+	})
+	t.Run("TestDeleteModelWithZeroPK", func(t *testing.T) {
+		assert.Error(t, Delete(nil, &modelWithZeroPK{}))
+	})
 }

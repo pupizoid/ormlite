@@ -3,11 +3,12 @@ package ormlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 type relationType int
@@ -23,6 +24,8 @@ const (
 	hasOne
 	manyToMany
 )
+
+var ErrNoRowsAffected = errors.New("no rows affected")
 
 // OrderBy describes ordering rule
 type OrderBy struct {
@@ -520,41 +523,43 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 	return nil
 }
 
-// Delete removes model object from database, if object was changed before saving it won't be deleted.
+// Delete removes model object from database by it's primary key
 func Delete(db *sql.DB, m Model) error {
-	s := reflect.ValueOf(m).Elem()
+	modelValue := reflect.ValueOf(m).Elem()
 
-	var (
-		columns []string
-		values  []interface{}
-	)
+	var pkFieldColumn string
+	var pkField reflect.Value
 
-	for i := 0; i < s.NumField(); i++ {
-		tag := s.Type().Field(i).Tag.Get(packageTagName)
-		if tag == "-" {
-			continue
+	for i := 0; i < modelValue.NumField(); i++ {
+		if lookForSetting(modelValue.Type().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
+			pkField = modelValue.Field(i)
+			pkFieldColumn = getFieldColumnName(modelValue.Type().Field(i))
 		}
-
-		if ri := extractRelationInfo(s.Type().Field(i)); ri != nil {
-			if ri.Type != noRelation {
-				continue
-			} // don't relay on mtm relation fields
-		}
-		columns = append(columns, fmt.Sprintf("%s = ?", getFieldColumnName(s.Type().Field(i))))
-		values = append(values, s.Field(i).Interface())
 	}
+
+	if !pkField.IsValid() {
+		return errors.New("delete failed: model does not have primary key")
+	}
+
+	if reflect.Zero(pkField.Type()).Interface() == pkField.Interface() {
+		return errors.New("delete failed: model's primary key has zero value")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
-	query := fmt.Sprintf("delete from %s where %s", m.Table(), strings.Join(columns, " and "))
-	res, err := db.ExecContext(ctx, query, values...)
+	query := fmt.Sprintf("delete from %s where %s = ?", m.Table(), pkFieldColumn)
+	res, err := db.ExecContext(ctx, query, pkField.Interface())
 	if err != nil {
 		return err
 	}
 
 	ra, err := res.RowsAffected()
-	if err != nil || ra == 0 {
-		return errors.New("query didn't affect any rows")
+	if err != nil {
+		return errors.Wrap(err, "delete failed")
+	}
+	if ra == 0 {
+		return ErrNoRowsAffected
 	}
 
 	return nil
