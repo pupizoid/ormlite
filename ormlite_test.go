@@ -12,10 +12,11 @@ import (
 )
 
 type simpleModel struct {
-	ID             int `ormlite:"col=rowid,primary"`
-	NotTaggedField string
-	TaggedField    string `ormlite:"col=tagged_field"`
-	OmittedField   string `ormlite:"-"`
+	ID               int `ormlite:"col=rowid,primary"`
+	NotTaggedField   string
+	TaggedField      string `ormlite:"col=tagged_field"`
+	OmittedField     string `ormlite:"-"`
+	notExportedField string
 }
 
 func (*simpleModel) Table() string { return "simple_model" }

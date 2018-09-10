@@ -95,6 +95,10 @@ type columnInfo struct {
 	Index        int
 }
 
+func isExportedField(f reflect.StructField) bool {
+	return strings.ToLower(string([]rune(f.Name)[0])) != string([]rune(f.Name)[0])
+}
+
 func lookForSetting(s, setting string) string {
 	pairs := strings.Split(s, ",")
 	for _, pair := range pairs {
@@ -112,6 +116,10 @@ func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
 	var columns []columnInfo
 
 	for i := 0; i < t.NumField(); i++ {
+		if !isExportedField(t.Field(i)) {
+			continue
+		}
+
 		tag := t.Field(i).Tag.Get(packageTagName)
 		if tag == "-" {
 			continue
@@ -354,6 +362,11 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	)
 
 	for i := 0; i < model.NumField(); i++ {
+
+		if !isExportedField(model.Type().Field(i)) {
+			continue
+		}
+
 		tag := model.Type().Field(i).Tag.Get(packageTagName)
 		if tag == "-" {
 			continue
@@ -591,6 +604,10 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 	)
 
 	for i := 0; i < et.NumField(); i++ {
+		if !isExportedField(et.Field(i)) {
+			continue
+		}
+
 		fTag, ok := et.Field(i).Tag.Lookup(packageTagName)
 		if !ok {
 			fields = append(fields, strings.ToLower(et.Field(i).Name))
