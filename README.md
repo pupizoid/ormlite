@@ -114,7 +114,8 @@ type Model struct {
  
  ```go
 type Model struct {
-   Related []ormlite.Model `ormlite:"many_to_many,table=mapping_table,field=model_id"`
+   Related       []ormlite.Model `ormlite:"many_to_many,table=mapping_table,field=model_id"`
+   RelatedActive []ormlite.Model `ormlite:"many_to_many,table=mapping_table(active=1),field=model_id"`
 }
 ```
 
