@@ -120,11 +120,13 @@ type Model struct {
 
 `many_to_many` indicates that field represents many to many relation.
 
-`table` should contain mapping table name to retrieve relation information.
+`table(additional condition)` should contain mapping table name to retrieve relation information. If it's necessary to map entities with additional conditions you can specify sql describing them in brackets.
 
 `field` should specify column in mapping table that has foreign key of original model
 
 Also there is a requirement to related model primary key field to contain `ref` setting that specifies column name of it's foreign key in mapping table.
+
+
 
 ### Examples
 

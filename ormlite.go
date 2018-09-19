@@ -86,6 +86,7 @@ type relationInfo struct {
 	Table      string
 	Type       relationType
 	FieldName  string
+	Condition  string
 	RefPkValue interface{}
 }
 
@@ -102,7 +103,7 @@ func isExportedField(f reflect.StructField) bool {
 func lookForSetting(s, setting string) string {
 	pairs := strings.Split(s, ",")
 	for _, pair := range pairs {
-		kvs := strings.Split(pair, "=")
+		kvs := strings.SplitN(pair, "=", 2)
 		if len(kvs) == 1 && kvs[0] == setting {
 			return setting
 		} else if len(kvs) == 2 && kvs[0] == setting {
@@ -160,7 +161,12 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 		}
 	} else if strings.Contains(t, "many_to_many") {
 		info.Type = manyToMany
-		info.Table = lookForSetting(t, "table")
+		tOption := lookForSetting(t, "table")
+		if strings.Contains(tOption, "(") {
+			info.Condition = tOption[strings.Index(tOption, "(")+1 : strings.Index(tOption, ")")]
+			tOption = tOption[:strings.Index(tOption, "(")]
+		}
+		info.Table = tOption
 		info.FieldName = lookForSetting(t, "field")
 	} else if strings.Contains(t, "has_many") {
 		info.Type = hasMany
@@ -321,6 +327,9 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 	)
 	if ri.FieldName != "" {
 		where = fmt.Sprintf("where %s = ?", ri.FieldName)
+		if ri.Condition != "" {
+			where += " and " + ri.Condition
+		}
 		args = append(args, pkField.Interface())
 	}
 	rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
@@ -468,7 +477,6 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 	}
 
 	for rows.Next() {
-
 		var (
 			se           = reflect.New(modelType)
 			fptrs        []interface{}
@@ -595,12 +603,12 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 	}
 
 	var (
-		pk          interface{}
-		pkField     reflect.Value
-		pkFieldName string
-		fields      []string
-		values      []interface{}
-		relations   = make(map[*relationInfo]interface{})
+		pk           interface{}
+		pkField      reflect.Value
+		pkFieldName  string
+		fields       []string
+		values       []interface{}
+		mtmRelations = make(map[*relationInfo]interface{})
 	)
 
 	for i := 0; i < et.NumField(); i++ {
@@ -633,7 +641,7 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 			case hasOne:
 				refValue := reflect.ValueOf(ev.Elem().Field(i).Interface())
 				if refValue.Kind() != reflect.Ptr {
-					return fmt.Errorf("one-to-one relations supports only pointer to struct, not %T", ev.Elem().Field(i).Interface())
+					return fmt.Errorf("one-to-one mtmRelations supports only pointer to struct, not %T", ev.Elem().Field(i).Interface())
 				}
 				var refPkFieldValue interface{}
 				for i := 0; i < refValue.Type().Elem().NumField(); i++ {
@@ -650,7 +658,7 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 				values = append(values, refPkFieldValue)
 				fields = append(fields, pkField)
 			case manyToMany:
-				relations[rInfo] = ev.Elem().Field(i).Interface()
+				mtmRelations[rInfo] = ev.Elem().Field(i).Interface()
 			}
 			continue
 		}
@@ -659,7 +667,7 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 		values = append(values, ev.Elem().Field(i).Interface())
 	}
 
-	if len(fields) == 0 && len(relations) != 0 {
+	if len(fields) == 0 && len(mtmRelations) != 0 {
 		goto Relations
 	}
 
@@ -704,21 +712,21 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 
 Relations:
 	// if there were mtm relations process them
-	for rel, iface := range relations {
+	for rel, iface := range mtmRelations {
 		if rel.Table == "" {
-			return errors.New("failed to process relations: not enough settings")
+			return errors.New("failed to process mtmRelations: not enough settings")
 		}
 		rv := reflect.ValueOf(iface)
 		if rv.Kind() != reflect.Slice {
-			return errors.New("failed to process relations: wrong field type")
+			return errors.New("failed to process mtmRelations: wrong field type")
 		}
 		rvt := rv.Type().Elem()
 		if rvt.Kind() != reflect.Ptr {
-			return errors.New("failed to process relations: wrong field type")
+			return errors.New("failed to process mtmRelations: wrong field type")
 		}
 		rvs := rvt.Elem()
 		if rvs.Kind() != reflect.Struct {
-			return errors.New("failed to process relations: wrong field type")
+			return errors.New("failed to process mtmRelations: wrong field type")
 		}
 		var refFieldName string
 		for i := 0; i < rvs.NumField(); i++ {
@@ -742,6 +750,9 @@ Relations:
 		)
 		if rel.FieldName != "" {
 			where = fmt.Sprintf("where %s = ?", rel.FieldName)
+			if rel.Condition != "" {
+				where += " and " + rel.Condition
+			}
 			args = append(args, pkField.Interface())
 		}
 
@@ -770,6 +781,17 @@ Relations:
 						if rel.FieldName != "" {
 							fields = fmt.Sprintf("%s, %s", rel.FieldName, refFieldName)
 							values = append([]interface{}{pk}, values...)
+							if rel.Condition != "" { // todo: implement support of most conditional operators
+								elems := strings.Split(rel.Condition, "=")
+								if elems[0] != "" {
+									fields += "," + elems[0]
+									if elems[1] != "" {
+										values = append(values, elems[1])
+									} else {
+										return errors.New("conditional field does not have value, check field tag")
+									}
+								}
+							}
 						}
 						res, err := db.ExecContext(ctx,
 							fmt.Sprintf(
@@ -779,7 +801,7 @@ Relations:
 						}
 						ra, err := res.RowsAffected()
 						if err != nil || ra == 0 {
-							return fmt.Errorf("failed to get rows affected of missing relations add or it's 0 (%v)", err)
+							return fmt.Errorf("failed to get rows affected of missing mtmRelations add or it's 0 (%v)", err)
 						}
 					}
 					exgRels[is.Field(i).Interface()] = true
@@ -794,6 +816,9 @@ Relations:
 				if rel.FieldName != "" {
 					fields += fmt.Sprintf(" and %s = ?", rel.FieldName)
 					values = append(values, pk)
+					if rel.Condition != "" {
+						fields += " and " + rel.Condition
+					}
 				}
 				res, err := db.ExecContext(ctx,
 					fmt.Sprintf(
@@ -803,7 +828,7 @@ Relations:
 				}
 				ra, err := res.RowsAffected()
 				if err != nil || ra == 0 {
-					return fmt.Errorf("failed to get rows affected of removed relations delete or it's 0 (%v)", err)
+					return fmt.Errorf("failed to get rows affected of removed mtmRelations delete or it's 0 (%v)", err)
 				}
 			}
 		}

@@ -322,6 +322,15 @@ type modelManyToMany struct {
 
 func (*modelManyToMany) Table() string { return "mtm_model" }
 
+type modelManyToManyWithCondition struct {
+	ID           int `ormlite:"col=rowid,primary"`
+	Name         string
+	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=false),field=m_id"`
+	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=true),field=m_id"`
+}
+
+func (*modelManyToManyWithCondition) Table() string { return "mtm_model" }
+
 type manyToManyRelationFixture struct {
 	suite.Suite
 	db *sql.DB
@@ -339,6 +348,13 @@ func (s *manyToManyRelationFixture) SetupSuite() {
                 insert into related_model (field) values('test 1'), ('test 2'), ('test 3');
                 insert into mtm_model(name) values ('name');
                 insert into mtm(m_id, rel_id) values(1, 1), (1, 2);
+
+				create table mtm_with_condition (
+					m_id int not null references mtm_model(rowid),
+					rel_id int not null references related_model(rowid),
+					value boolean not null
+				);
+				insert into mtm_with_condition (m_id, rel_id, value) values (1,1,true), (1,3,true), (1,1,false), (1,2,true);
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -349,19 +365,42 @@ func (s *manyToManyRelationFixture) TearDownSuite() {
 }
 
 func (s *manyToManyRelationFixture) TestQueryStruct() {
+	// test regular mtm relation
 	var m modelManyToMany
-	assert.NoError(s.T(), QueryStruct(
+	require.NoError(s.T(), QueryStruct(
 		s.db, WithWhere(DefaultOptions(), Where{"name": "name"}), &m))
 	assert.NotEmpty(s.T(), m.Related)
 	assert.Equal(s.T(), 2, len(m.Related))
+	// test mtm relation with condition
+	var mc modelManyToManyWithCondition
+	if assert.NoError(s.T(), QueryStruct(
+		s.db, WithWhere(DefaultOptions(), Where{"name": "name"}), &mc)) {
+		assert.Equal(s.T(), modelManyToManyWithCondition{
+			ID: 1, Name: "name",
+			RelatedFalse: []*relatedModel{{1, "test 1"}},
+			RelatedTrue:  []*relatedModel{{1, "test 1"}, {2, "test 2"}, {3, "test 3"}},
+		}, mc)
+	}
 }
 
 func (s *manyToManyRelationFixture) TestQuerySlice() {
+	// test regular mtm relation
 	var mm []*modelManyToMany
 	require.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
 	for _, m := range mm {
 		assert.NotEmpty(s.T(), m.Related)
 		assert.Equal(s.T(), 2, len(m.Related))
+	}
+	// test mtm relation with condition
+	var mmc []*modelManyToManyWithCondition
+	if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mmc)) {
+		for _, m := range mmc {
+			assert.Equal(s.T(), &modelManyToManyWithCondition{
+				ID: 1, Name: "name",
+				RelatedFalse: []*relatedModel{{1, "test 1"}},
+				RelatedTrue:  []*relatedModel{{1, "test 1"}, {2, "test 2"}, {3, "test 3"}},
+			}, m)
+		}
 	}
 }
 
@@ -395,6 +434,18 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	}
 	assert.NoError(s.T(), Upsert(s.db, &m3))
 	assert.Equal(s.T(), 2, m3.ID)
+	// check upsert with condition
+	var mc = modelManyToManyWithCondition{
+		ID:           1,
+		Name:         "name",
+		RelatedFalse: []*relatedModel{{1, "test 1"}},
+		RelatedTrue:  []*relatedModel{{2, "test 2"}, {3, "test 3"}},
+	}
+	require.NoError(s.T(), Upsert(s.db, &mc))
+	var mc1 modelManyToManyWithCondition
+	if assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": mc.ID}), &mc1)) {
+		assert.Equal(s.T(), mc, mc1)
+	}
 }
 
 func TestManyToManyRelation(t *testing.T) {
