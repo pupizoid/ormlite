@@ -325,8 +325,8 @@ func (*modelManyToMany) Table() string { return "mtm_model" }
 type modelManyToManyWithCondition struct {
 	ID           int `ormlite:"col=rowid,primary"`
 	Name         string
-	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=false),field=m_id"`
-	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=true),field=m_id"`
+	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=0),field=m_id"`
+	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=1),field=m_id"`
 }
 
 func (*modelManyToManyWithCondition) Table() string { return "mtm_model" }
@@ -438,7 +438,7 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	var mc = modelManyToManyWithCondition{
 		ID:           1,
 		Name:         "name",
-		RelatedFalse: []*relatedModel{{1, "test 1"}},
+		RelatedFalse: []*relatedModel{{1, "test 1"}, {3, "test 3"}},
 		RelatedTrue:  []*relatedModel{{2, "test 2"}, {3, "test 3"}},
 	}
 	require.NoError(s.T(), Upsert(s.db, &mc))

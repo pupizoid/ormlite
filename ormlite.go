@@ -755,7 +755,6 @@ Relations:
 			}
 			args = append(args, pkField.Interface())
 		}
-
 		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", refFieldName, rel.Table, where), args...)
 		if err != nil {
 			return err
@@ -782,15 +781,16 @@ Relations:
 							fields = fmt.Sprintf("%s, %s", rel.FieldName, refFieldName)
 							values = append([]interface{}{pk}, values...)
 							if rel.Condition != "" { // todo: implement support of most conditional operators
-								elems := strings.Split(rel.Condition, "=")
-								if elems[0] != "" {
-									fields += "," + elems[0]
-									if elems[1] != "" {
-										values = append(values, elems[1])
+								cond := strings.Split(rel.Condition, "=")
+								if cond[0] != "" {
+									fields += "," + cond[0]
+									if cond[1] != "" {
+										values = append(values, cond[1])
 									} else {
 										return errors.New("conditional field does not have value, check field tag")
 									}
 								}
+
 							}
 						}
 						res, err := db.ExecContext(ctx,
