@@ -1,6 +1,7 @@
 package ormlite
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -199,8 +200,8 @@ func (s *hasOneRelationFixture) SetupSuite() {
 
 	_, err = c.Exec(`
                 create table related_model ( field text );
-                create table one_to_one_rel ( rel_id int references related_model (rowid) );
-				create table one_to_one_cycle_rel (rel_id int references one_to_one_cycle_rel (rowid));
+                create table one_to_one_rel ( rel_id int );
+				create table one_to_one_cycle_rel (rel_id int);
 
                 insert into related_model (field) values('test'), ('test 2');
                 insert into one_to_one_rel (rel_id) values(1), (null);
@@ -279,7 +280,7 @@ func (s *hasManyModelFixture) SetupSuite() {
 	require.NoError(s.T(), err)
 	_, err = c.Exec(`
                 create table has_many_model (name text);
-                create table relating_model (related_id int references has_many_model (rowid));
+                create table relating_model (related_id int);
 
                 insert into has_many_model (name) values ('test'), ('asds');
                 insert into relating_model (related_id) values (1), (1), (1), (2), (2);
@@ -314,6 +315,13 @@ func TestHasManyRelation(t *testing.T) {
 	suite.Run(t, new(hasManyModelFixture))
 }
 
+type relatingModelWithCustomPK struct {
+	ID    int `ormlite:"primary,ref=c_rel_id"`
+	Field string
+}
+
+func (*relatingModelWithCustomPK) Table() string { return "relating_model_custom_pk" }
+
 type modelManyToMany struct {
 	ID      int `ormlite:"col=rowid,primary"`
 	Name    string
@@ -331,6 +339,14 @@ type modelManyToManyWithCondition struct {
 
 func (*modelManyToManyWithCondition) Table() string { return "mtm_model" }
 
+type modelManyToManyWithCustomPK struct {
+	ID      int `ormlite:"col=rowid,primary"`
+	Name    string
+	Related []*relatingModelWithCustomPK `ormlite:"many_to_many,table=mtm_with_custom_model,field=m_id"`
+}
+
+func (*modelManyToManyWithCustomPK) Table() string { return "mtm_model" }
+
 type manyToManyRelationFixture struct {
 	suite.Suite
 	db *sql.DB
@@ -343,18 +359,19 @@ func (s *manyToManyRelationFixture) SetupSuite() {
 	_, err = c.Exec(`
                 create table related_model ( field text );
                 create table mtm_model ( name text );
-
-                create table mtm (m_id int not null references mtm_model (rowid), rel_id int not null references related_model (rowid));
+                create table mtm (m_id int, rel_id int);
+                
                 insert into related_model (field) values('test 1'), ('test 2'), ('test 3');
                 insert into mtm_model(name) values ('name');
                 insert into mtm(m_id, rel_id) values(1, 1), (1, 2);
 
-				create table mtm_with_condition (
-					m_id int not null references mtm_model(rowid),
-					rel_id int not null references related_model(rowid),
-					value boolean not null
-				);
+				create table mtm_with_condition ( m_id int, rel_id int, value boolean not null );
 				insert into mtm_with_condition (m_id, rel_id, value) values (1,1,true), (1,3,true), (1,1,false), (1,2,true);
+
+				create table relating_model_custom_pk(id integer primary key, field text);
+				insert into relating_model_custom_pk(field) values ('common test 1'), ('common test 2');
+				create table mtm_with_custom_model (m_id int, c_rel_id int);
+				insert into mtm_with_custom_model(m_id, c_rel_id) values (1,1), (1,2);
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -381,24 +398,43 @@ func (s *manyToManyRelationFixture) TestQueryStruct() {
 			RelatedTrue:  []*relatedModel{{1, "test 1"}, {2, "test 2"}, {3, "test 3"}},
 		}, mc)
 	}
+	// test mtm to model with custom primary key
+	var mcc modelManyToManyWithCustomPK
+	if assert.NoError(s.T(), QueryStruct(
+		s.db, WithWhere(DefaultOptions(), Where{"name": "name"}), &mcc)) {
+		assert.Equal(s.T(), modelManyToManyWithCustomPK{
+			ID: 1, Name: "name",
+			Related: []*relatingModelWithCustomPK{{1, "common test 1"}, {2, "common test 2"}},
+		}, mcc)
+	}
 }
 
 func (s *manyToManyRelationFixture) TestQuerySlice() {
 	// test regular mtm relation
 	var mm []*modelManyToMany
-	require.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
+	require.NoError(s.T(), QuerySliceContext(context.Background(), s.db, DefaultOptions(), &mm))
 	for _, m := range mm {
 		assert.NotEmpty(s.T(), m.Related)
 		assert.Equal(s.T(), 2, len(m.Related))
 	}
 	// test mtm relation with condition
 	var mmc []*modelManyToManyWithCondition
-	if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mmc)) {
+	if assert.NoError(s.T(), QuerySliceContext(context.Background(), s.db, DefaultOptions(), &mmc)) {
 		for _, m := range mmc {
 			assert.Equal(s.T(), &modelManyToManyWithCondition{
 				ID: 1, Name: "name",
 				RelatedFalse: []*relatedModel{{1, "test 1"}},
 				RelatedTrue:  []*relatedModel{{1, "test 1"}, {2, "test 2"}, {3, "test 3"}},
+			}, m)
+		}
+	}
+	// test mtm to model with custom primary key
+	var mmcc []*modelManyToManyWithCustomPK
+	if assert.NoError(s.T(), QuerySliceContext(context.Background(), s.db, DefaultOptions(), &mmcc)) {
+		for _, m := range mmcc {
+			assert.Equal(s.T(), &modelManyToManyWithCustomPK{
+				ID: 1, Name: "name",
+				Related: []*relatingModelWithCustomPK{{1, "common test 1"}, {2, "common test 2"}},
 			}, m)
 		}
 	}

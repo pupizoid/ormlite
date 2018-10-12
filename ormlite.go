@@ -375,7 +375,7 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 		}
 		if lookForSetting(t, "primary") == "primary" {
 			rPKField = lookForSetting(t, "ref")
-			PKField = lookForSetting(t, "col")
+			PKField = getFieldColumnName(rve.Field(i))
 			break
 		}
 	}
