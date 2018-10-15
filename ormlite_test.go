@@ -168,6 +168,54 @@ func TestSimpleModel(t *testing.T) {
 	suite.Run(t, new(simpleModelFixture))
 }
 
+type modelWithCompoundPrimaryKey struct {
+	FirstID  int `ormlite:"primary,col=first_id"`
+	SecondID int `ormlite:"primary,col=second_id"`
+	Field    string
+}
+
+func (s *modelWithCompoundPrimaryKey) Table() string { return "model_with_compound_primary_key" }
+
+type modelWithCompoundPrimaryKeyFixture struct {
+	suite.Suite
+	db *sql.DB
+}
+
+func (s *modelWithCompoundPrimaryKeyFixture) SetupSuite() {
+	c, err := sql.Open("sqlite3", ":memory:")
+	assert.NoError(s.T(), err)
+
+	_, err = c.Exec(`
+				create table model_with_compound_primary_key (
+					first_id integer not null,
+					second_id integer not null,
+					field text,
+					primary key(first_id, second_id)
+				);
+	`)
+	assert.NoError(s.T(), err)
+	s.db = c
+}
+
+func (s *modelWithCompoundPrimaryKeyFixture) TestACreate() {
+	cases := []modelWithCompoundPrimaryKey{
+		{1, 2, "1"},
+		{1, 1, "2"},
+		{2, 1, "3"},
+	}
+	for _, model := range cases {
+		assert.NoError(s.T(), Upsert(s.db, &model))
+	}
+}
+
+func (s *modelWithCompoundPrimaryKeyFixture) TestBUpdate() {
+	assert.NoError(s.T(), Upsert(s.db, &modelWithCompoundPrimaryKey{1, 2, "4"}))
+}
+
+func TestModelWithCompoundPrimaryKey(t *testing.T) {
+	suite.Run(t, new(modelWithCompoundPrimaryKeyFixture))
+}
+
 type relatedModel struct {
 	ID    int `ormlite:"col=rowid,primary,ref=rel_id"`
 	Field string
@@ -323,7 +371,7 @@ type relatingModelWithCustomPK struct {
 func (*relatingModelWithCustomPK) Table() string { return "relating_model_custom_pk" }
 
 type modelManyToMany struct {
-	ID      int `ormlite:"col=rowid,primary"`
+	ID      int `ormlite:"col=rowid,primary,rel=m_id"`
 	Name    string
 	Related []*relatedModel `ormlite:"many_to_many,table=mtm,field=m_id"`
 }
@@ -331,7 +379,7 @@ type modelManyToMany struct {
 func (*modelManyToMany) Table() string { return "mtm_model" }
 
 type modelManyToManyWithCondition struct {
-	ID           int `ormlite:"col=rowid,primary"`
+	ID           int `ormlite:"col=rowid,primary,rel=m_id"`
 	Name         string
 	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=0),field=m_id"`
 	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=1),field=m_id"`
@@ -340,7 +388,7 @@ type modelManyToManyWithCondition struct {
 func (*modelManyToManyWithCondition) Table() string { return "mtm_model" }
 
 type modelManyToManyWithCustomPK struct {
-	ID      int `ormlite:"col=rowid,primary"`
+	ID      int `ormlite:"col=rowid,primary,rel=m_id"`
 	Name    string
 	Related []*relatingModelWithCustomPK `ormlite:"many_to_many,table=mtm_with_custom_model,field=m_id"`
 }

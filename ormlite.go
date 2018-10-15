@@ -605,7 +605,7 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 	}
 
 	var (
-		pkInfo    pkFieldInfo
+		pkInfo    []pkFieldInfo
 		relations = make(map[*relationInfo]interface{})
 	)
 
@@ -619,16 +619,16 @@ func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
 	}
 
 	{
-		if err := upsertModel(ctx, db, &pkInfo, fields, values, m); err != nil {
+		if err := upsertModel(ctx, db, pkInfo, fields, values, m); err != nil {
 			return err
 		}
 	}
 
 Relations:
-	return syncManyToManyRelations(ctx, db, relations, pkInfo.field)
+	return syncManyToManyRelations(ctx, db, relations, pkInfo)
 }
 
-func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*relationInfo]interface{}, pkField reflect.Value) error {
+func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*relationInfo]interface{}, pkFields []pkFieldInfo) error {
 	for rel, value := range relations {
 		refPkFieldName, err := getRefPkFieldName(rel, value)
 		if err != nil {
@@ -636,18 +636,25 @@ func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*rel
 		}
 
 		var (
-			where   string
-			args    []interface{}
-			exgRels = make(map[interface{}]bool)
+			where             []string
+			args              []interface{}
+			existingRelations = make(map[interface{}]bool)
 		)
 		if rel.FieldName != "" {
-			where = fmt.Sprintf("where %s = ?", rel.FieldName)
-			if rel.Condition != "" {
-				where += " and " + rel.Condition
+			for _, i := range pkFields {
+				where = append(where, fmt.Sprintf("%s = ?", i.relationName))
+				args = append(args, i.field.Interface())
 			}
-			args = append(args, pkField.Interface())
+			if rel.Condition != "" {
+				where = append(where, rel.Condition)
+			}
+			//args = append(args, pkField.Interface())
 		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", refPkFieldName, rel.Table, where), args...)
+		var whereClause string
+		if len(where) != 0 {
+			whereClause = "where " + strings.Join(where, " and ")
+		}
+		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", refPkFieldName, rel.Table, whereClause), args...)
 		if err != nil {
 			return err
 		}
@@ -656,7 +663,7 @@ func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*rel
 			if err := rows.Scan(&refPK); err != nil {
 				return err
 			}
-			exgRels[refPK] = false
+			existingRelations[refPK] = false
 		}
 
 		for k := 0; k < reflect.ValueOf(value).Len(); k++ {
@@ -667,38 +674,40 @@ func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*rel
 					continue
 				}
 				if lookForSetting(t, "primary") == "primary" {
-					if _, ok := exgRels[relatedModel.Field(i).Interface()]; !ok {
-						if err := insertMissingRelation(ctx, db, relatedModel.Field(i).Interface(), rel, refPkFieldName, pkField); err != nil {
+					if _, ok := existingRelations[relatedModel.Field(i).Interface()]; !ok {
+						if err := insertMissingRelation(ctx, db, relatedModel.Field(i).Interface(), rel, refPkFieldName, pkFields); err != nil {
 							return err
 						}
 					}
-					exgRels[relatedModel.Field(i).Interface()] = true
+					existingRelations[relatedModel.Field(i).Interface()] = true
 				}
 			}
 		}
 
-		if err := deleteObsoleteRelations(ctx, db, exgRels, refPkFieldName, rel, pkField); err != nil {
+		if err := deleteObsoleteRelations(ctx, db, existingRelations, refPkFieldName, rel, pkFields); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interface{}]bool, refPkField string, rel *relationInfo, pkField reflect.Value) error {
+func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interface{}]bool, refPkField string, rel *relationInfo, pkFields []pkFieldInfo) error {
 	for refPK, exists := range relMap {
 		if !exists {
 			values := []interface{}{refPK}
-			fields := fmt.Sprintf("%s = ?", refPkField)
+			fields := []string{fmt.Sprintf("%s = ?", refPkField)}
 			if rel.FieldName != "" {
-				fields += fmt.Sprintf(" and %s = ?", rel.FieldName)
-				values = append(values, pkField.Interface())
+				for _, i := range pkFields {
+					fields = append(fields, i.relationName)
+					values = append(values, i.field.Interface())
+				}
 				if rel.Condition != "" {
-					fields += " and " + rel.Condition
+					fields = append(fields, rel.Condition)
 				}
 			}
 			res, err := db.ExecContext(ctx,
 				fmt.Sprintf(
-					"delete from %s where %s", rel.Table, fields), values...)
+					"delete from %s where %s", rel.Table, strings.Join(fields, " and ")), values...)
 			if err != nil {
 				return err
 			}
@@ -711,28 +720,32 @@ func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interfa
 	return nil
 }
 
-func insertMissingRelation(ctx context.Context, db *sql.DB, relPkKey interface{}, rel *relationInfo, refPkField string, pkField reflect.Value) error {
+func insertMissingRelation(ctx context.Context, db *sql.DB, relPkKey interface{}, rel *relationInfo, refPkField string, pkFields []pkFieldInfo) error {
 	values := []interface{}{relPkKey}
-	fields := fmt.Sprintf("%s", refPkField)
-	if rel.FieldName != "" {
-		fields = fmt.Sprintf("%s, %s", rel.FieldName, refPkField)
-		values = append([]interface{}{pkField.Interface()}, values...)
-		if rel.Condition != "" { // todo: implement support of most conditional operators
-			cond := strings.Split(rel.Condition, "=")
-			if cond[0] != "" {
-				fields += "," + cond[0]
-				if cond[1] != "" {
-					values = append(values, cond[1])
-				} else {
-					return errors.New("conditional field does not have value, check field tag")
-				}
+	fields := []string{refPkField}
+	//if rel.FieldName != "" {
+	//	fields = fmt.Sprintf("%s, %s", rel.FieldName, refPkField)
+	//	values = append([]interface{}{pkField.Interface()}, values...)
+	if rel.Condition != "" { // todo: implement support of most conditional operators
+		cond := strings.Split(rel.Condition, "=")
+		if cond[0] != "" {
+			fields = append(fields, cond[0])
+			if cond[1] != "" {
+				values = append(values, cond[1])
+			} else {
+				return errors.New("conditional field does not have value, check field tag")
 			}
-
 		}
+
+	}
+	//}
+	for _, i := range pkFields {
+		fields = append(fields, i.relationName)
+		values = append(values, i.field.Interface())
 	}
 	res, err := db.ExecContext(ctx,
 		fmt.Sprintf(
-			"insert into %s(%s) values(%s)", rel.Table, fields, strings.Trim(strings.Repeat("?,", len(values)), ",")), values...)
+			"insert into %s(%s) values(%s)", rel.Table, strings.Join(fields, ","), strings.Trim(strings.Repeat("?,", len(values)), ",")), values...)
 	if err != nil {
 		return err
 	}
@@ -777,28 +790,81 @@ func getRefPkFieldName(rel *relationInfo, i interface{}) (string, error) {
 }
 
 type pkFieldInfo struct {
-	name  string
-	field reflect.Value
-	value interface{}
+	relationName string
+	name         string
+	field        reflect.Value
+	value        interface{}
 }
 
-func upsertModel(ctx context.Context, db *sql.DB, info *pkFieldInfo, fields []string, values []interface{}, m Model) error {
-	var query string
-	if info.value == nil {
-		query = fmt.Sprintf(
-			"insert into %s(%s) values(%s)", m.Table(), strings.Join(fields, ","),
-			strings.Trim(strings.Repeat("?,", len(fields)), ","),
-		)
-	} else {
-		var fieldPairs []string
-		for _, f := range fields {
-			fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
-		}
-		values = append(values, info.value)
-		query = fmt.Sprintf(
-			fmt.Sprintf("update %s set %s where %s = ?", m.Table(), strings.Join(fieldPairs, ","), info.name),
-		)
+func upsertModel(ctx context.Context, db *sql.DB, info []pkFieldInfo, fields []string, values []interface{}, m Model) error {
+	//var query string
+	//if len(info) == 1 && info[0].value == nil {
+	//	query = fmt.Sprintf(
+	//		"insert into %s(%s) values(%s)", m.Table(), strings.Join(fields, ","),
+	//		strings.Trim(strings.Repeat("?,", len(fields)), ","),
+	//	)
+	//} else {
+	//	var (
+	//		fieldPairs []string
+	//		where      []string
+	//		indexes    []string
+	//	)
+	//	for _, f := range fields {
+	//		fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
+	//	}
+	//	//values = append(values, info.value)
+	//	for _, fi := range info {
+	//		values = append(values, fi.value)
+	//		where = append(where, fmt.Sprintf("%s = ?", fi.name))
+	//		indexes = append(indexes, fi.name)
+	//	}
+	//	query = fmt.Sprintf(
+	//		fmt.Sprintf("insert into %s values(%s) on conflict(%s) do update set %s", m.Table(), strings.Join(fieldPairs, ","), strings.Join(where, " and "), strings.Join(indexes, ","), strings.Join(fieldPairs, ",")),
+	//	)
+	//}
+	//
+	//res, err := db.ExecContext(ctx, query, values...)
+	//if err != nil {
+	//	return err
+	//}
+	//ra, err := res.RowsAffected()
+	//if err != nil || ra == 0 {
+	//	return errors.New("no rows were affected")
+	//}
+	//// if it was insert query - set new id to entry
+	//if info[0].value == nil {
+	//	iid, err := res.LastInsertId()
+	//	if err != nil {
+	//		return fmt.Errorf("failed to get last inserted id: %v", err)
+	//	}
+	//	if info[0].field.Kind() != reflect.Int {
+	//		return errors.New("insert functionality can be used only for models with int primary keys")
+	//	}
+	//	info[0].field.SetInt(iid)
+	//	info[0].value = iid
+	//}
+	//return nil
+	var (
+		query      string
+		fieldPairs []string
+		indexes    []string
+	)
+	for _, f := range fields {
+		fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
 	}
+	for _, fi := range info {
+		if reflect.Zero(fi.field.Type()).Interface() != fi.field.Interface() {
+			fields = append(fields, fi.name)
+			values = append(values, fi.field.Interface())
+		}
+		indexes = append(indexes, fi.name)
+	}
+	values = append(values, values...)
+	query = fmt.Sprintf(
+		fmt.Sprintf("insert into %s(%s) values(%s) on conflict(%s) do update set %s",
+			m.Table(), strings.Join(fields, ","), strings.Trim(strings.Repeat("?,", len(fields)), ","),
+			strings.Join(indexes, ","), strings.Join(fieldPairs, ",")),
+	)
 	res, err := db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return err
@@ -808,21 +874,21 @@ func upsertModel(ctx context.Context, db *sql.DB, info *pkFieldInfo, fields []st
 		return errors.New("no rows were affected")
 	}
 	// if it was insert query - set new id to entry
-	if info.value == nil {
+	if reflect.Zero(info[0].field.Type()).Interface() == info[0].field.Interface() {
 		iid, err := res.LastInsertId()
 		if err != nil {
 			return fmt.Errorf("failed to get last inserted id: %v", err)
 		}
-		if info.field.Kind() != reflect.Int {
+		if info[0].field.Kind() != reflect.Int {
 			return errors.New("insert functionality can be used only for models with int primary keys")
 		}
-		info.field.SetInt(iid)
-		info.value = iid
+		info[0].field.SetInt(iid)
+		info[0].value = iid
 	}
 	return nil
 }
 
-func parseQueryEntries(modelType reflect.Type, value reflect.Value, info *pkFieldInfo, relations map[*relationInfo]interface{}) ([]string, []interface{}, error) {
+func parseQueryEntries(modelType reflect.Type, value reflect.Value, pkFields *[]pkFieldInfo, relations map[*relationInfo]interface{}) ([]string, []interface{}, error) {
 	var (
 		fields []string
 		values []interface{}
@@ -839,11 +905,12 @@ func parseQueryEntries(modelType reflect.Type, value reflect.Value, info *pkFiel
 		}
 
 		if strings.Contains(fTag, "primary") {
-			if reflect.Zero(modelType.Field(i).Type).Interface() != value.Elem().Field(i).Interface() {
-				info.value = value.Elem().Field(i).Interface()
-			}
+			var info pkFieldInfo
+			info.value = value.Elem().Field(i).Interface()
 			info.name = getFieldColumnName(modelType.Field(i))
+			info.relationName = lookForSetting(fTag, "rel")
 			info.field = value.Elem().Field(i)
+			*pkFields = append(*pkFields, info)
 			continue
 		}
 
