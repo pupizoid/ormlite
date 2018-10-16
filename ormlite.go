@@ -554,29 +554,45 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 func Delete(db *sql.DB, m Model) error {
 	modelValue := reflect.ValueOf(m).Elem()
 
-	var pkFieldColumn string
-	var pkField reflect.Value
+	var (
+		where    []string
+		args     []interface{}
+		pkFields []pkFieldInfo
+	)
 
 	for i := 0; i < modelValue.NumField(); i++ {
-		if lookForSetting(modelValue.Type().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
-			pkField = modelValue.Field(i)
-			pkFieldColumn = getFieldColumnName(modelValue.Type().Field(i))
+		fv := modelValue.Field(i)
+		ft := modelValue.Type().Field(i)
+		if lookForSetting(ft.Tag.Get(packageTagName), "primary") == "primary" {
+			var info pkFieldInfo
+			info.value = fv.Interface()
+			info.name = getFieldColumnName(ft)
+			info.relationName = lookForSetting(ft.Tag.Get(packageTagName), "rel")
+			info.field = fv
+			pkFields = append(pkFields, info)
+			//pkField = modelValue.Field(i)
+			//pkFieldColumn = getFieldColumnName(modelValue.Type().Field(i))
 		}
 	}
 
-	if !pkField.IsValid() {
+	if len(pkFields) == 0 {
 		return errors.New("delete failed: model does not have primary key")
 	}
 
-	if reflect.Zero(pkField.Type()).Interface() == pkField.Interface() {
-		return errors.New("delete failed: model's primary key has zero value")
+	for _, pkField := range pkFields {
+		if reflect.Zero(pkField.field.Type()).Interface() == pkField.field.Interface() {
+			return errors.New("delete failed: model's primary key has zero value")
+		}
+
+		where = append(where, fmt.Sprintf("%s = ?", pkField.name))
+		args = append(args, pkField.value)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
-	query := fmt.Sprintf("delete from %s where %s = ?", m.Table(), pkFieldColumn)
-	res, err := db.ExecContext(ctx, query, pkField.Interface())
+	query := fmt.Sprintf("delete from %s where %s", m.Table(), strings.Join(where, " and "))
+	res, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -723,9 +739,6 @@ func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interfa
 func insertMissingRelation(ctx context.Context, db *sql.DB, relPkKey interface{}, rel *relationInfo, refPkField string, pkFields []pkFieldInfo) error {
 	values := []interface{}{relPkKey}
 	fields := []string{refPkField}
-	//if rel.FieldName != "" {
-	//	fields = fmt.Sprintf("%s, %s", rel.FieldName, refPkField)
-	//	values = append([]interface{}{pkField.Interface()}, values...)
 	if rel.Condition != "" { // todo: implement support of most conditional operators
 		cond := strings.Split(rel.Condition, "=")
 		if cond[0] != "" {
@@ -738,7 +751,6 @@ func insertMissingRelation(ctx context.Context, db *sql.DB, relPkKey interface{}
 		}
 
 	}
-	//}
 	for _, i := range pkFields {
 		fields = append(fields, i.relationName)
 		values = append(values, i.field.Interface())
@@ -797,53 +809,6 @@ type pkFieldInfo struct {
 }
 
 func upsertModel(ctx context.Context, db *sql.DB, info []pkFieldInfo, fields []string, values []interface{}, m Model) error {
-	//var query string
-	//if len(info) == 1 && info[0].value == nil {
-	//	query = fmt.Sprintf(
-	//		"insert into %s(%s) values(%s)", m.Table(), strings.Join(fields, ","),
-	//		strings.Trim(strings.Repeat("?,", len(fields)), ","),
-	//	)
-	//} else {
-	//	var (
-	//		fieldPairs []string
-	//		where      []string
-	//		indexes    []string
-	//	)
-	//	for _, f := range fields {
-	//		fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
-	//	}
-	//	//values = append(values, info.value)
-	//	for _, fi := range info {
-	//		values = append(values, fi.value)
-	//		where = append(where, fmt.Sprintf("%s = ?", fi.name))
-	//		indexes = append(indexes, fi.name)
-	//	}
-	//	query = fmt.Sprintf(
-	//		fmt.Sprintf("insert into %s values(%s) on conflict(%s) do update set %s", m.Table(), strings.Join(fieldPairs, ","), strings.Join(where, " and "), strings.Join(indexes, ","), strings.Join(fieldPairs, ",")),
-	//	)
-	//}
-	//
-	//res, err := db.ExecContext(ctx, query, values...)
-	//if err != nil {
-	//	return err
-	//}
-	//ra, err := res.RowsAffected()
-	//if err != nil || ra == 0 {
-	//	return errors.New("no rows were affected")
-	//}
-	//// if it was insert query - set new id to entry
-	//if info[0].value == nil {
-	//	iid, err := res.LastInsertId()
-	//	if err != nil {
-	//		return fmt.Errorf("failed to get last inserted id: %v", err)
-	//	}
-	//	if info[0].field.Kind() != reflect.Int {
-	//		return errors.New("insert functionality can be used only for models with int primary keys")
-	//	}
-	//	info[0].field.SetInt(iid)
-	//	info[0].value = iid
-	//}
-	//return nil
 	var (
 		query      string
 		fieldPairs []string

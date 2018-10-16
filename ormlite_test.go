@@ -208,8 +208,30 @@ func (s *modelWithCompoundPrimaryKeyFixture) TestACreate() {
 	}
 }
 
-func (s *modelWithCompoundPrimaryKeyFixture) TestBUpdate() {
-	assert.NoError(s.T(), Upsert(s.db, &modelWithCompoundPrimaryKey{1, 2, "4"}))
+func (s *modelWithCompoundPrimaryKeyFixture) TestBRead() {
+	var m modelWithCompoundPrimaryKey
+	assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"first_id": 1, "second_id": 1}}, &m))
+	assert.Equal(s.T(), "2", m.Field)
+	var mm []*modelWithCompoundPrimaryKey
+	assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
+	assert.Equal(s.T(), 3, len(mm))
+}
+
+func (s *modelWithCompoundPrimaryKeyFixture) TestCUpdate() {
+	assert.NoError(s.T(), Upsert(s.db, &modelWithCompoundPrimaryKey{1, 1, "4"}))
+	var m modelWithCompoundPrimaryKey
+	if assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"first_id": 1, "second_id": 1}}, &m)) {
+		assert.Equal(s.T(), "4", m.Field)
+	}
+
+}
+
+func (s *modelWithCompoundPrimaryKeyFixture) TestDelete() {
+	assert.NoError(s.T(), Delete(s.db, &modelWithCompoundPrimaryKey{1, 1, ""}))
+	var mm []*modelWithCompoundPrimaryKey
+	if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm)) {
+		assert.Equal(s.T(), 2, len(mm))
+	}
 }
 
 func TestModelWithCompoundPrimaryKey(t *testing.T) {
