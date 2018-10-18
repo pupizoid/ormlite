@@ -13,7 +13,7 @@ import (
 )
 
 type simpleModel struct {
-	ID               int `ormlite:"col=rowid,primary"`
+	ID               int64 `ormlite:"col=rowid,primary"`
 	NotTaggedField   string
 	TaggedField      string `ormlite:"col=tagged_field"`
 	OmittedField     string `ormlite:"-"`
@@ -25,7 +25,7 @@ func (*simpleModel) Table() string { return "simple_model" }
 var _ Model = (*simpleModel)(nil)
 
 type simpleModelWithRelation struct {
-	ID             int `ormlite:"col=rowid,primary"`
+	ID             int64 `ormlite:"col=rowid,primary"`
 	NotTaggedField string
 	Related        *simpleModel `ormlite:"has_one,col=related_id"`
 }
@@ -33,7 +33,7 @@ type simpleModelWithRelation struct {
 func (sm *simpleModelWithRelation) Table() string { return "simple_model_has_one" }
 
 type simpleModelWithCycleRelation struct {
-	ID             int `ormlite:"col=rowid,primary"`
+	ID             int64 `ormlite:"col=rowid,primary"`
 	NotTaggedField string
 	Related        *simpleModelWithCycleRelation `ormlite:"has_one,col=related_id"`
 }
@@ -153,7 +153,7 @@ func (s *simpleModelFixture) TestOffset() {
 	assert.NoError(s.T(), QuerySlice(s.db, WithOffset(WithLimit(DefaultOptions(), 2), 1), &mm))
 	assert.NotEmpty(s.T(), mm)
 	for _, m := range mm {
-		assert.NotEqual(s.T(), 1, m.ID, "First row shouldn't be returned since offset")
+		assert.NotEqual(s.T(), int64(1), m.ID, "First row shouldn't be returned since offset")
 	}
 }
 
@@ -161,7 +161,7 @@ func (s *simpleModelFixture) TestOrderBy() {
 	var mm []*simpleModel
 	require.NoError(s.T(), QuerySlice(s.db, WithOrder(DefaultOptions(), OrderBy{Field: "rowid", Order: "desc"}), &mm))
 	assert.NotEmpty(s.T(), mm)
-	assert.NotEqual(s.T(), 1, mm[0].ID)
+	assert.NotEqual(s.T(), int64(1), mm[0].ID)
 }
 
 func TestSimpleModel(t *testing.T) {
@@ -169,8 +169,8 @@ func TestSimpleModel(t *testing.T) {
 }
 
 type modelWithCompoundPrimaryKey struct {
-	FirstID  int `ormlite:"primary,col=first_id"`
-	SecondID int `ormlite:"primary,col=second_id"`
+	FirstID  int64 `ormlite:"primary,col=first_id,ref=first_id_ref"`
+	SecondID int64 `ormlite:"primary,col=second_id,ref=second_id_ref"`
 	Field    string
 }
 
@@ -210,7 +210,7 @@ func (s *modelWithCompoundPrimaryKeyFixture) TestACreate() {
 
 func (s *modelWithCompoundPrimaryKeyFixture) TestBRead() {
 	var m modelWithCompoundPrimaryKey
-	assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"first_id": 1, "second_id": 1}}, &m))
+	assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"first_id": 1, "second_id": 1}, Divider: AND}, &m))
 	assert.Equal(s.T(), "2", m.Field)
 	var mm []*modelWithCompoundPrimaryKey
 	assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
@@ -220,7 +220,7 @@ func (s *modelWithCompoundPrimaryKeyFixture) TestBRead() {
 func (s *modelWithCompoundPrimaryKeyFixture) TestCUpdate() {
 	assert.NoError(s.T(), Upsert(s.db, &modelWithCompoundPrimaryKey{1, 1, "4"}))
 	var m modelWithCompoundPrimaryKey
-	if assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"first_id": 1, "second_id": 1}}, &m)) {
+	if assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"first_id": 1, "second_id": 1}, Divider: AND}, &m)) {
 		assert.Equal(s.T(), "4", m.Field)
 	}
 
@@ -239,21 +239,21 @@ func TestModelWithCompoundPrimaryKey(t *testing.T) {
 }
 
 type relatedModel struct {
-	ID    int `ormlite:"col=rowid,primary,ref=rel_id"`
+	ID    int64 `ormlite:"col=rowid,primary,ref=rel_id"`
 	Field string
 }
 
 func (m *relatedModel) Table() string { return "related_model" }
 
 type modelHasOne struct {
-	ID      int           `ormlite:"col=rowid,primary"`
+	ID      int64         `ormlite:"col=rowid,primary"`
 	Related *relatedModel `ormlite:"has_one,col=rel_id"`
 }
 
 func (m *modelHasOne) Table() string { return "one_to_one_rel" }
 
 type modelHasOneCycle struct {
-	ID      int               `ormlite:"col=rowid,primary"`
+	ID      int64             `ormlite:"col=rowid,primary"`
 	Related *modelHasOneCycle `ormlite:"has_one,col=rel_id"`
 }
 
@@ -288,10 +288,10 @@ func (s *hasOneRelationFixture) TearDownSuite() {
 func (s *hasOneRelationFixture) TestQueryStruct() {
 	var m modelHasOne
 	require.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": 1}), &m))
-	assert.Equal(s.T(), 1, m.ID)
+	assert.Equal(s.T(), int64(1), m.ID)
 	require.NotNil(s.T(), m.Related)
 	assert.Equal(s.T(), "test", m.Related.Field)
-	assert.Equal(s.T(), 1, m.Related.ID)
+	assert.Equal(s.T(), int64(1), m.Related.ID)
 }
 
 func (s *hasOneRelationFixture) TestUpsertAndDelete() {
@@ -303,7 +303,7 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 	for _, m := range mm {
 		assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m.ID}), m))
 	}
-	assert.Equal(s.T(), 2, mm[2].Related.ID)
+	assert.Equal(s.T(), int64(2), mm[2].Related.ID)
 	assert.Equal(s.T(), "test 2", mm[2].Related.Field)
 	//
 	assert.NoError(s.T(), Delete(s.db, mm[0]))
@@ -326,14 +326,14 @@ func TestHasOneRelation(t *testing.T) {
 }
 
 type relatingModel struct {
-	ID      int           `ormlite:"col=rowid,primary"`
+	ID      int64         `ormlite:"col=rowid,primary"`
 	Related *hasManyModel `ormlite:"has_one,col=related_id"`
 }
 
 func (*relatingModel) Table() string { return "relating_model" }
 
 type hasManyModel struct {
-	ID      int `ormlite:"col=rowid,primary"`
+	ID      int64 `ormlite:"col=rowid,primary"`
 	Name    string
 	Related []*relatingModel `ormlite:"has_many"`
 }
@@ -386,14 +386,14 @@ func TestHasManyRelation(t *testing.T) {
 }
 
 type relatingModelWithCustomPK struct {
-	ID    int `ormlite:"primary,ref=c_rel_id"`
+	ID    int64 `ormlite:"primary,ref=c_rel_id"`
 	Field string
 }
 
 func (*relatingModelWithCustomPK) Table() string { return "relating_model_custom_pk" }
 
 type modelManyToMany struct {
-	ID      int `ormlite:"col=rowid,primary,rel=m_id"`
+	ID      int64 `ormlite:"col=rowid,primary,ref=m_id"`
 	Name    string
 	Related []*relatedModel `ormlite:"many_to_many,table=mtm,field=m_id"`
 }
@@ -401,7 +401,7 @@ type modelManyToMany struct {
 func (*modelManyToMany) Table() string { return "mtm_model" }
 
 type modelManyToManyWithCondition struct {
-	ID           int `ormlite:"col=rowid,primary,rel=m_id"`
+	ID           int64 `ormlite:"col=rowid,primary,ref=m_id"`
 	Name         string
 	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=0),field=m_id"`
 	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=1),field=m_id"`
@@ -410,12 +410,20 @@ type modelManyToManyWithCondition struct {
 func (*modelManyToManyWithCondition) Table() string { return "mtm_model" }
 
 type modelManyToManyWithCustomPK struct {
-	ID      int `ormlite:"col=rowid,primary,rel=m_id"`
+	ID      int64 `ormlite:"col=rowid,primary,ref=m_id"`
 	Name    string
 	Related []*relatingModelWithCustomPK `ormlite:"many_to_many,table=mtm_with_custom_model,field=m_id"`
 }
 
 func (*modelManyToManyWithCustomPK) Table() string { return "mtm_model" }
+
+type modelManyToManyWithCompoundPK struct {
+	ID      int64 `ormlite:"primary,ref=model_id"`
+	Name    string
+	Related []*modelWithCompoundPrimaryKey `ormlite:"many_to_many,table=mtm_with_compound_pk,field=model_id"`
+}
+
+func (m *modelManyToManyWithCompoundPK) Table() string { return "mtm_model_with_id" }
 
 type manyToManyRelationFixture struct {
 	suite.Suite
@@ -424,6 +432,7 @@ type manyToManyRelationFixture struct {
 
 func (s *manyToManyRelationFixture) SetupSuite() {
 	c, err := sql.Open("sqlite3", ":memory:")
+	//c, err := sql.Open("sqlite3", "test.db")
 	require.NoError(s.T(), err)
 
 	_, err = c.Exec(`
@@ -434,7 +443,7 @@ func (s *manyToManyRelationFixture) SetupSuite() {
                 insert into related_model (field) values('test 1'), ('test 2'), ('test 3');
                 insert into mtm_model(name) values ('name');
                 insert into mtm(m_id, rel_id) values(1, 1), (1, 2);
-
+				--
 				create table mtm_with_condition ( m_id int, rel_id int, value boolean not null );
 				insert into mtm_with_condition (m_id, rel_id, value) values (1,1,true), (1,3,true), (1,1,false), (1,2,true);
 
@@ -442,6 +451,16 @@ func (s *manyToManyRelationFixture) SetupSuite() {
 				insert into relating_model_custom_pk(field) values ('common test 1'), ('common test 2');
 				create table mtm_with_custom_model (m_id int, c_rel_id int);
 				insert into mtm_with_custom_model(m_id, c_rel_id) values (1,1), (1,2);
+				-- mtm to compound key
+				create table mtm_model_with_id(id integer primary key, name text);
+				create table mtm_with_compound_pk(model_id int, first_id_ref int, second_id_ref int);
+				create table model_with_compound_primary_key (
+					first_id integer not null,
+					second_id integer not null,
+					field text,
+					primary key(first_id, second_id)
+				);
+				insert into model_with_compound_primary_key(first_id, second_id, field) values (1,1,'1'), (1,2,'2'), (2,1,'3');
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -539,7 +558,7 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 		Related: []*relatedModel{{ID: 3}},
 	}
 	assert.NoError(s.T(), Upsert(s.db, &m3))
-	assert.Equal(s.T(), 2, m3.ID)
+	assert.Equal(s.T(), int64(2), m3.ID)
 	// check upsert with condition
 	var mc = modelManyToManyWithCondition{
 		ID:           1,
@@ -552,6 +571,38 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	if assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": mc.ID}), &mc1)) {
 		assert.Equal(s.T(), mc, mc1)
 	}
+}
+
+func (s *manyToManyRelationFixture) TestCompoundKeys() {
+	// test creation
+	assert.NoError(s.T(), Upsert(s.db, &modelManyToManyWithCompoundPK{
+		Name:    "test",
+		Related: []*modelWithCompoundPrimaryKey{{1, 2, "2"}, {1, 1, "1"}},
+	}))
+	// test fetching
+	var m modelManyToManyWithCompoundPK
+	if assert.NoError(s.T(), QueryStructContext(
+		context.Background(), s.db, &Options{Where: Where{"id": 1}, RelationDepth: 1}, &m)) {
+		assert.NotZero(s.T(), m.ID)
+		assert.Equal(s.T(), 2, len(m.Related))
+	}
+	var mm []*modelManyToManyWithCompoundPK
+	if assert.NoError(s.T(), QuerySliceContext(context.Background(), s.db, DefaultOptions(), &mm)) {
+		assert.NotNil(s.T(), mm)
+		assert.Equal(s.T(), 2, len(m.Related))
+	}
+	// test update
+	m.Name = "test edited"
+	m.Related = []*modelWithCompoundPrimaryKey{{1, 2, "2"}, {2, 1, "3"}}
+	if assert.NoError(s.T(), Upsert(s.db, &m)) {
+		var mNew modelManyToManyWithCompoundPK
+		if assert.NoError(s.T(), QueryStructContext(
+			context.Background(), s.db, &Options{Where: Where{"id": 1}, RelationDepth: 1}, &mNew)) {
+			assert.Equal(s.T(), m, mNew)
+		}
+	}
+	// test delete
+	assert.NoError(s.T(), Delete(s.db, &m))
 }
 
 func TestManyToManyRelation(t *testing.T) {
@@ -576,8 +627,8 @@ func (s *modelMultiTableFixture) SetupSuite() {
 
 	_, err = c.Exec(`
                 create table related_model(field text);
-                create table one(rel_id int references related_model(rowid));
-                create table two(rel_id int references related_model(rowid));
+                create table one(rel_id int);
+                create table two(rel_id int);
 
                 insert into related_model(field) values('1'), ('2'), ('3'), ('4'), ('5');
                 insert into one(rel_id) values (1), (2), (3);
@@ -627,13 +678,13 @@ func TestMultiTableModel(t *testing.T) {
 }
 
 type modelWithoutPK struct {
-	ID int `ormlite:"col=rowid"`
+	ID int64 `ormlite:"col=rowid"`
 }
 
 func (*modelWithoutPK) Table() string { return "" }
 
 type modelWithZeroPK struct {
-	ID int `ormlite:"primary,col=rowid"`
+	ID int64 `ormlite:"primary,col=rowid"`
 }
 
 func (*modelWithZeroPK) Table() string { return "" }

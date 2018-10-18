@@ -37,9 +37,15 @@ type OrderBy struct {
 // Where is a map containing fields and their values to meet in the result
 type Where map[string]interface{}
 
+const (
+	AND = " and "
+	OR  = " or "
+)
+
 // Options represents query options
 type Options struct {
 	Where         Where    `json:"where"`
+	Divider       string   `json:"divider"`
 	Limit         int      `json:"limit"`
 	Offset        int      `json:"offset"`
 	OrderBy       *OrderBy `json:"order_by"`
@@ -48,7 +54,7 @@ type Options struct {
 
 // DefaultOptions returns default options for query
 func DefaultOptions() *Options {
-	return &Options{RelationDepth: defaultRelationDepth}
+	return &Options{RelationDepth: defaultRelationDepth, Divider: AND}
 }
 
 // WithWhere modifies existing options by adding where clause to them
@@ -186,7 +192,15 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 			var keys []string
 			for k, v := range opts.Where {
 				if reflect.TypeOf(v).Kind() == reflect.Slice {
-					keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", len(v.([]interface{}))), ",")))
+					if strings.Contains(k, ",") {
+						rowValueCount := len(strings.Split(k, ","))
+						for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
+							keys = append(keys, fmt.Sprintf("(%s) = (%s)", k, strings.Trim(strings.Repeat("?,", rowValueCount), ",")))
+						}
+						opts.Divider = OR
+					} else {
+						keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", len(v.([]interface{}))), ",")))
+					}
 					values = append(values, v.([]interface{})...)
 				} else {
 					keys = append(keys, fmt.Sprintf("%s = ?", k))
@@ -194,7 +208,7 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 				}
 			}
 			if len(keys) > 0 {
-				q += fmt.Sprintf(" where %s", strings.Join(keys, " AND "))
+				q += fmt.Sprintf(" where %s", strings.Join(keys, opts.Divider))
 			}
 		}
 		if opts.Limit != 0 {
@@ -228,13 +242,20 @@ func getFieldColumnName(field reflect.StructField) string {
 	return strings.ToLower(field.Name)
 }
 
-func getPrimaryFieldValue(value reflect.Value) (reflect.Value, error) {
+func getPrimaryFieldsInfo(value reflect.Value) ([]pkFieldInfo, error) {
+	var pkFields []pkFieldInfo
 	for k := 0; k < value.NumField(); k++ {
-		if lookForSetting(value.Type().Field(k).Tag.Get(packageTagName), "primary") == "primary" {
-			return value.Field(k), nil
+		fv := value.Field(k)
+		ft := value.Type().Field(k)
+		if lookForSetting(ft.Tag.Get(packageTagName), "primary") == "primary" {
+			var info pkFieldInfo
+			info.name = getFieldColumnName(ft)
+			info.field = fv
+			info.relationName = lookForSetting(ft.Tag.Get(packageTagName), "ref")
+			pkFields = append(pkFields, info)
 		}
 	}
-	return reflect.Value{}, fmt.Errorf("related model does not have primary key field")
+	return pkFields, nil
 }
 
 func loadRelationsForSlice(ctx context.Context, db *sql.DB, opts *Options, slicePtr reflect.Value, colInfoPerEntry [][]columnInfo) error {
@@ -250,19 +271,19 @@ func loadRelationsForSlice(ctx context.Context, db *sql.DB, opts *Options, slice
 							return err
 						}
 					case hasMany:
-						pkField, err := getPrimaryFieldValue(modelValue)
+						pkFields, err := getPrimaryFieldsInfo(modelValue)
 						if err != nil {
 							return err
 						}
-						if err := loadHasManyRelation(ctx, db, modelValue.Field(ci.Index), pkField, slicePtr.Index(i).Type(), opts); err != nil {
+						if err := loadHasManyRelation(ctx, db, modelValue.Field(ci.Index), pkFields, slicePtr.Index(i).Type(), opts); err != nil {
 							return err
 						}
 					case manyToMany:
-						pkField, err := getPrimaryFieldValue(modelValue)
+						pkFields, err := getPrimaryFieldsInfo(modelValue)
 						if err != nil {
 							return err
 						}
-						if err := loadManyToManyRelation(ctx, db, &ci.RelationInfo, modelValue.Field(ci.Index), pkField, opts); err != nil {
+						if err := loadManyToManyRelation(ctx, db, &ci.RelationInfo, modelValue.Field(ci.Index), pkFields, opts); err != nil {
 							return err
 						}
 					}
@@ -273,7 +294,7 @@ func loadRelationsForSlice(ctx context.Context, db *sql.DB, opts *Options, slice
 	return nil
 }
 
-func loadStructRelations(ctx context.Context, db *sql.DB, opts *Options, out Model, pkField reflect.Value, relations map[*relationInfo]reflect.Value) error {
+func loadStructRelations(ctx context.Context, db *sql.DB, opts *Options, out Model, pkField []pkFieldInfo, relations map[*relationInfo]reflect.Value) error {
 	if opts == nil || opts.RelationDepth != 0 {
 		for ri, rv := range relations {
 			if ri.Type == manyToMany {
@@ -294,7 +315,7 @@ func loadStructRelations(ctx context.Context, db *sql.DB, opts *Options, out Mod
 	return nil
 }
 
-func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue, pkField reflect.Value, parentType reflect.Type, options *Options) error {
+func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue reflect.Value, pkFields []pkFieldInfo, parentType reflect.Type, options *Options) error {
 	if fieldValue.Kind() != reflect.Slice {
 		return fmt.Errorf("can't load relations: wrong field type: %v", fieldValue.Type())
 	}
@@ -313,12 +334,13 @@ func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue, pkField re
 		if f.Type.AssignableTo(parentType) {
 			relField = &f
 		}
+
 	}
 	if relField == nil {
 		return errors.New("failed to load has many relation since none fields of related type meet parent type")
 	}
 	return QuerySliceContext(ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
-		*relField): pkField.Interface()}), fieldValue.Addr().Interface())
+		*relField): pkFields[0].field.Interface()}), fieldValue.Addr().Interface())
 }
 
 func loadHasOneRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
@@ -352,10 +374,11 @@ func loadHasOneRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv re
 	return nil
 }
 
-func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv, pkField reflect.Value, options *Options) error {
+func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv reflect.Value, pkFields []pkFieldInfo, options *Options) error {
 	var (
-		rPKField, PKField string
-		rPKs              []interface{}
+		refPkField, PkField, where []string
+		args                       []interface{}
+		relatedQueryConditions     = make(Where)
 	)
 	if rv.Kind() != reflect.Slice {
 		return fmt.Errorf("can't load relations: wrong field type: %v", rv.Type())
@@ -374,36 +397,55 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 			continue
 		}
 		if lookForSetting(t, "primary") == "primary" {
-			rPKField = lookForSetting(t, "ref")
-			PKField = getFieldColumnName(rve.Field(i))
-			break
+			refPkField = append(refPkField, lookForSetting(t, "ref"))
+			PkField = append(PkField, getFieldColumnName(rve.Field(i)))
 		}
 	}
 
-	var (
-		where string
-		args  []interface{}
-	)
-	if ri.FieldName != "" {
-		where = fmt.Sprintf("where %s = ?", ri.FieldName)
-		if ri.Condition != "" {
-			where += " and " + ri.Condition
-		}
-		args = append(args, pkField.Interface())
+	if len(refPkField) < 1 {
+		return errors.New("can't load relations: related struct does not have primary key")
 	}
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", rPKField, ri.Table, where), args...)
+
+	if ri.FieldName != "" {
+		for _, pkField := range pkFields {
+			where = append(where, fmt.Sprintf("%s = ?", pkField.relationName))
+			args = append(args, pkField.field.Interface())
+		}
+		if ri.Condition != "" {
+			where = append(where, ri.Condition)
+		}
+	}
+	var whereClause string
+	if len(pkFields) != 0 {
+		whereClause = " where " + strings.Join(where, AND)
+	}
+	rows, err := db.QueryContext(
+		ctx, fmt.Sprintf("select %s from %s%s",
+			strings.Join(refPkField, ","), ri.Table, whereClause,
+		), args...,
+	)
 	if err != nil {
 		return err
 	}
+
 	for rows.Next() {
-		var rPK int
-		if err := rows.Scan(&rPK); err != nil {
+		var relatedPrimaryKeyValues []interface{}
+		for i := 0; i < len(PkField); i++ {
+			var relatedPk interface{}
+			relatedPrimaryKeyValues = append(relatedPrimaryKeyValues, &relatedPk)
+		}
+		if err := rows.Scan(relatedPrimaryKeyValues...); err != nil {
 			return err
 		}
-		rPKs = append(rPKs, rPK)
+		if _, ok := relatedQueryConditions[strings.Join(PkField, ",")]; !ok {
+			relatedQueryConditions[strings.Join(PkField, ",")] = relatedPrimaryKeyValues
+		} else {
+			relatedQueryConditions[strings.Join(PkField, ",")] = append(
+				relatedQueryConditions[strings.Join(PkField, ",")].([]interface{}), relatedPrimaryKeyValues...)
+		}
 	}
 	return QuerySliceContext(
-		ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{PKField: rPKs}),
+		ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1, Divider: options.Divider}, relatedQueryConditions),
 		rv.Addr().Interface(),
 	)
 }
@@ -423,11 +465,16 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	}
 
 	var (
-		pkField   reflect.Value
+		pkFields  []pkFieldInfo
 		columns   []string
 		fieldPtrs []interface{}
 		relations = make(map[*relationInfo]reflect.Value)
 	)
+
+	pkFields, err := getPrimaryFieldsInfo(model)
+	if err != nil {
+		return errors.Wrap(err, "failed to load struct")
+	}
 
 	for i := 0; i < model.NumField(); i++ {
 
@@ -450,10 +497,6 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 		}
 		columns = append(columns, getFieldColumnName(model.Type().Field(i)))
 		fieldPtrs = append(fieldPtrs, model.Field(i).Addr().Interface())
-
-		if lookForSetting(tag, "primary") == "primary" {
-			pkField = model.Field(i)
-		}
 	}
 
 	if len(columns) == 0 && len(relations) != 0 {
@@ -474,7 +517,7 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	}
 
 Relations:
-	return loadStructRelations(ctx, db, opts, out, pkField, relations)
+	return loadStructRelations(ctx, db, opts, out, pkFields, relations)
 }
 
 // QuerySlice scans rows into the slice of structs
@@ -565,13 +608,9 @@ func Delete(db *sql.DB, m Model) error {
 		ft := modelValue.Type().Field(i)
 		if lookForSetting(ft.Tag.Get(packageTagName), "primary") == "primary" {
 			var info pkFieldInfo
-			info.value = fv.Interface()
 			info.name = getFieldColumnName(ft)
-			info.relationName = lookForSetting(ft.Tag.Get(packageTagName), "rel")
 			info.field = fv
 			pkFields = append(pkFields, info)
-			//pkField = modelValue.Field(i)
-			//pkFieldColumn = getFieldColumnName(modelValue.Type().Field(i))
 		}
 	}
 
@@ -585,7 +624,7 @@ func Delete(db *sql.DB, m Model) error {
 		}
 
 		where = append(where, fmt.Sprintf("%s = ?", pkField.name))
-		args = append(args, pkField.value)
+		args = append(args, pkField.field.Interface())
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
@@ -646,7 +685,7 @@ Relations:
 
 func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*relationInfo]interface{}, pkFields []pkFieldInfo) error {
 	for rel, value := range relations {
-		refPkFieldName, err := getRefPkFieldName(rel, value)
+		refPkFieldNames, err := getRefPkFieldName(rel, value)
 		if err != nil {
 			return err
 		}
@@ -664,54 +703,71 @@ func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*rel
 			if rel.Condition != "" {
 				where = append(where, rel.Condition)
 			}
-			//args = append(args, pkField.Interface())
 		}
 		var whereClause string
 		if len(where) != 0 {
 			whereClause = "where " + strings.Join(where, " and ")
 		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", refPkFieldName, rel.Table, whereClause), args...)
+		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", strings.Join(refPkFieldNames, ","), rel.Table, whereClause), args...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var refPK int // TODO: we need some casting to support not only int PK's
-			if err := rows.Scan(&refPK); err != nil {
+			var refPkKeys []interface{}
+			for i := 0; i < len(refPkFieldNames); i++ {
+				refPkKeys = append(refPkKeys, new(interface{}))
+			}
+			if err := rows.Scan(refPkKeys...); err != nil {
 				return err
 			}
-			existingRelations[refPK] = false
+			refPkArr := reflect.New(reflect.ArrayOf(len(refPkKeys), reflect.TypeOf(refPkKeys).Elem())).Elem()
+			for i, j := range refPkKeys {
+				refPkArr.Index(i).Set(reflect.ValueOf(j).Elem())
+			}
+			existingRelations[refPkArr.Interface()] = false
 		}
 
 		for k := 0; k < reflect.ValueOf(value).Len(); k++ {
 			relatedModel := reflect.ValueOf(value).Index(k).Elem()
+			var refPkFieldValues []interface{} // todo: find a way to use multiple pk as map key
 			for i := 0; i < relatedModel.Type().NumField(); i++ {
 				t, ok := relatedModel.Type().Field(i).Tag.Lookup(packageTagName)
 				if !ok {
 					continue
 				}
 				if lookForSetting(t, "primary") == "primary" {
-					if _, ok := existingRelations[relatedModel.Field(i).Interface()]; !ok {
-						if err := insertMissingRelation(ctx, db, relatedModel.Field(i).Interface(), rel, refPkFieldName, pkFields); err != nil {
-							return err
-						}
-					}
-					existingRelations[relatedModel.Field(i).Interface()] = true
+					refPkFieldValues = append(refPkFieldValues, relatedModel.Field(i).Interface())
 				}
 			}
+			refPkFieldValuesArr := reflect.New(reflect.ArrayOf(len(refPkFieldValues), reflect.TypeOf(refPkFieldValues).Elem())).Elem()
+			for i, j := range refPkFieldValues {
+				refPkFieldValuesArr.Index(i).Set(reflect.ValueOf(j))
+			}
+			if _, ok := existingRelations[refPkFieldValuesArr.Interface()]; !ok {
+				if err := insertMissingRelation(ctx, db, refPkFieldValues, rel, refPkFieldNames, pkFields); err != nil {
+					return err
+				}
+			}
+			existingRelations[refPkFieldValuesArr.Interface()] = true
 		}
-
-		if err := deleteObsoleteRelations(ctx, db, existingRelations, refPkFieldName, rel, pkFields); err != nil {
+		if err := deleteObsoleteRelations(ctx, db, existingRelations, refPkFieldNames, rel, pkFields); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interface{}]bool, refPkField string, rel *relationInfo, pkFields []pkFieldInfo) error {
+func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interface{}]bool, refPkFields []string, rel *relationInfo, pkFields []pkFieldInfo) error {
 	for refPK, exists := range relMap {
 		if !exists {
-			values := []interface{}{refPK}
-			fields := []string{fmt.Sprintf("%s = ?", refPkField)}
+			var values []interface{}
+			for i := 0; i < reflect.ValueOf(refPK).Len(); i++ {
+				values = append(values, reflect.ValueOf(refPK).Index(i).Interface())
+			}
+			var fields []string
+			for _, refPkField := range refPkFields {
+				fields = append(fields, fmt.Sprintf("%s = ?", refPkField))
+			}
 			if rel.FieldName != "" {
 				for _, i := range pkFields {
 					fields = append(fields, i.relationName)
@@ -736,9 +792,9 @@ func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interfa
 	return nil
 }
 
-func insertMissingRelation(ctx context.Context, db *sql.DB, relPkKey interface{}, rel *relationInfo, refPkField string, pkFields []pkFieldInfo) error {
-	values := []interface{}{relPkKey}
-	fields := []string{refPkField}
+func insertMissingRelation(ctx context.Context, db *sql.DB, refPkKeys []interface{}, rel *relationInfo, refPkFields []string, pkFields []pkFieldInfo) error {
+	values := refPkKeys
+	fields := refPkFields
 	if rel.Condition != "" { // todo: implement support of most conditional operators
 		cond := strings.Split(rel.Condition, "=")
 		if cond[0] != "" {
@@ -768,35 +824,34 @@ func insertMissingRelation(ctx context.Context, db *sql.DB, relPkKey interface{}
 	return nil
 }
 
-func getRefPkFieldName(rel *relationInfo, i interface{}) (string, error) {
+func getRefPkFieldName(rel *relationInfo, i interface{}) ([]string, error) {
 	if rel.Table == "" {
-		return "", errors.New("failed to process relations: not enough settings")
+		return nil, errors.New("failed to process relations: not enough settings")
 	}
 	rv := reflect.ValueOf(i)
 	if rv.Kind() != reflect.Slice {
-		return "", errors.New("failed to process relations: wrong field type")
+		return nil, errors.New("failed to process relations: wrong field type")
 	}
 	rvt := rv.Type().Elem()
 	if rvt.Kind() != reflect.Ptr {
-		return "", errors.New("failed to process relations: wrong field type")
+		return nil, errors.New("failed to process relations: wrong field type")
 	}
 	rvs := rvt.Elem()
 	if rvs.Kind() != reflect.Struct {
-		return "", errors.New("failed to process relations: wrong field type")
+		return nil, errors.New("failed to process relations: wrong field type")
 	}
-	var refFieldName string
+	var refFieldName []string
 	for i := 0; i < rvs.NumField(); i++ {
 		tag, ok := rvs.Field(i).Tag.Lookup(packageTagName)
 		if !ok {
 			continue
 		}
 		if lookForSetting(tag, "primary") == "primary" {
-			refFieldName = lookForSetting(tag, "ref")
-			break
+			refFieldName = append(refFieldName, lookForSetting(tag, "ref"))
 		}
 	}
-	if refFieldName == "" {
-		return "", errors.New("related type does not have primary key or reference field name")
+	if len(refFieldName) == 0 {
+		return nil, errors.New("related type does not have primary key or reference field name")
 	}
 	return refFieldName, nil
 }
@@ -805,7 +860,6 @@ type pkFieldInfo struct {
 	relationName string
 	name         string
 	field        reflect.Value
-	value        interface{}
 }
 
 func upsertModel(ctx context.Context, db *sql.DB, info []pkFieldInfo, fields []string, values []interface{}, m Model) error {
@@ -844,11 +898,10 @@ func upsertModel(ctx context.Context, db *sql.DB, info []pkFieldInfo, fields []s
 		if err != nil {
 			return fmt.Errorf("failed to get last inserted id: %v", err)
 		}
-		if info[0].field.Kind() != reflect.Int {
-			return errors.New("insert functionality can be used only for models with int primary keys")
+		if info[0].field.Kind() != reflect.Int64 {
+			return errors.New("insert functionality can be used only for models with int64 primary keys")
 		}
 		info[0].field.SetInt(iid)
-		info[0].value = iid
 	}
 	return nil
 }
@@ -871,9 +924,8 @@ func parseQueryEntries(modelType reflect.Type, value reflect.Value, pkFields *[]
 
 		if strings.Contains(fTag, "primary") {
 			var info pkFieldInfo
-			info.value = value.Elem().Field(i).Interface()
 			info.name = getFieldColumnName(modelType.Field(i))
-			info.relationName = lookForSetting(fTag, "rel")
+			info.relationName = lookForSetting(fTag, "ref")
 			info.field = value.Elem().Field(i)
 			*pkFields = append(*pkFields, info)
 			continue
