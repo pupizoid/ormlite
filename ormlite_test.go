@@ -432,7 +432,6 @@ type manyToManyRelationFixture struct {
 
 func (s *manyToManyRelationFixture) SetupSuite() {
 	c, err := sql.Open("sqlite3", ":memory:")
-	//c, err := sql.Open("sqlite3", "test.db")
 	require.NoError(s.T(), err)
 
 	_, err = c.Exec(`

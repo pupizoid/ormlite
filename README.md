@@ -22,7 +22,7 @@ Loads data from table and scans it into provided struct. If query was too broad 
 
 ```go
 type SimpleStruct struct {
-  IntField int `ormlite:"col=rowid,primary"`
+  IntField int64 `ormlite:"col=rowid,primary"`
   Text string
   UnusedField bool `ormlite:"-"
 }
@@ -126,8 +126,6 @@ type Model struct {
 `field` should specify column in mapping table that has foreign key of original model
 
 Also there is a requirement to related model primary key field to contain `ref` setting that specifies column name of it's foreign key in mapping table.
-
-
 
 ### Examples
 
