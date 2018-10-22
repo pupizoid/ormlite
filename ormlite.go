@@ -48,8 +48,10 @@ type OrderBy struct {
 type Where map[string]interface{}
 
 const (
+	// AND is a glue between multiple statements after `where`
 	AND = " and "
-	OR  = " or "
+	// OR is a glue between multiple statements after `where`
+	OR = " or "
 )
 
 // Options represents query options
@@ -865,7 +867,10 @@ func getRefPkFieldName(rel *relationInfo, i interface{}) ([]string, error) {
 			continue
 		}
 		if lookForSetting(tag, "primary") == "primary" {
-			refFieldName = append(refFieldName, lookForSetting(tag, "ref"))
+			field := lookForSetting(tag, "ref")
+			if field != "" {
+				refFieldName = append(refFieldName, field)
+			}
 		}
 	}
 	if len(refFieldName) == 0 {
