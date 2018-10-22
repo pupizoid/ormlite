@@ -28,6 +28,16 @@ const (
 // ErrNoRowsAffected is an error to return when no rows were affected
 var ErrNoRowsAffected = errors.New("no rows affected")
 
+// Error is a custom struct that contains sql error, query and arguments
+type Error struct {
+	SQLError error
+	Query    string
+	Args     []interface{}
+}
+
+// Error implements error interface
+func (e *Error) Error() string { return e.SQLError.Error() }
+
 // OrderBy describes ordering rule
 type OrderBy struct {
 	Field string `json:"field"`
@@ -221,7 +231,11 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 			q += fmt.Sprintf(" order by %s %s", opts.OrderBy.Field, opts.OrderBy.Order)
 		}
 	}
-	return db.QueryContext(ctx, q, values...)
+	rows, err := db.QueryContext(ctx, q, values...)
+	if err != nil {
+		return nil, &Error{err, q, values}
+	}
+	return rows, nil
 }
 
 func getFieldColumnName(field reflect.StructField) string {
@@ -419,13 +433,11 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 	if len(pkFields) != 0 {
 		whereClause = " where " + strings.Join(where, AND)
 	}
-	rows, err := db.QueryContext(
-		ctx, fmt.Sprintf("select %s from %s%s",
-			strings.Join(refPkField, ","), ri.Table, whereClause,
-		), args...,
-	)
+
+	query := fmt.Sprintf("select %s from %s%s", strings.Join(refPkField, ","), ri.Table, whereClause)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return err
+		return &Error{err, query, args}
 	}
 
 	for rows.Next() {
@@ -633,7 +645,7 @@ func Delete(db *sql.DB, m Model) error {
 	query := fmt.Sprintf("delete from %s where %s", m.Table(), strings.Join(where, " and "))
 	res, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
-		return err
+		return &Error{err, query, args}
 	}
 
 	ra, err := res.RowsAffected()
@@ -708,9 +720,12 @@ func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*rel
 		if len(where) != 0 {
 			whereClause = "where " + strings.Join(where, " and ")
 		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf("select %s from %s %s", strings.Join(refPkFieldNames, ","), rel.Table, whereClause), args...)
+
+		query := fmt.Sprintf(
+			"select %s from %s %s", strings.Join(refPkFieldNames, ","), rel.Table, whereClause)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
-			return err
+			return &Error{err, query, args}
 		}
 		for rows.Next() {
 			var refPkKeys []interface{}
@@ -777,11 +792,12 @@ func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interfa
 					fields = append(fields, rel.Condition)
 				}
 			}
-			res, err := db.ExecContext(ctx,
-				fmt.Sprintf(
-					"delete from %s where %s", rel.Table, strings.Join(fields, " and ")), values...)
+
+			query := fmt.Sprintf(
+				"delete from %s where %s", rel.Table, strings.Join(fields, AND))
+			res, err := db.ExecContext(ctx, query, values...)
 			if err != nil {
-				return err
+				return &Error{err, query, values}
 			}
 			ra, err := res.RowsAffected()
 			if err != nil || ra == 0 {
@@ -811,11 +827,13 @@ func insertMissingRelation(ctx context.Context, db *sql.DB, refPkKeys []interfac
 		fields = append(fields, i.relationName)
 		values = append(values, i.field.Interface())
 	}
-	res, err := db.ExecContext(ctx,
-		fmt.Sprintf(
-			"insert into %s(%s) values(%s)", rel.Table, strings.Join(fields, ","), strings.Trim(strings.Repeat("?,", len(values)), ",")), values...)
+
+	query := fmt.Sprintf(
+		"insert into %s(%s) values(%s)", rel.Table, strings.Join(fields, ","), strings.Trim(
+			strings.Repeat("?,", len(values)), ","))
+	res, err := db.ExecContext(ctx, query, values...)
 	if err != nil {
-		return err
+		return &Error{err, query, values}
 	}
 	ra, err := res.RowsAffected()
 	if err != nil || ra == 0 {
@@ -886,7 +904,7 @@ func upsertModel(ctx context.Context, db *sql.DB, info []pkFieldInfo, fields []s
 	)
 	res, err := db.ExecContext(ctx, query, values...)
 	if err != nil {
-		return err
+		return &Error{err, query, values}
 	}
 	ra, err := res.RowsAffected()
 	if err != nil || ra == 0 {
