@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/spf13/cast"
 	"reflect"
 	"strings"
 	"time"
@@ -830,7 +831,11 @@ func insertMissingRelation(ctx context.Context, db *sql.DB, refPkKeys []interfac
 		if cond[0] != "" {
 			fields = append(fields, cond[0])
 			if cond[1] != "" {
-				values = append(values, cond[1])
+				if strings.Contains(cond[1], "\"") {
+					values = append(values, cast.ToString(cond[1]))
+				} else {
+					values = append(values, cast.ToInt64(cond[1]))
+				}
 			} else {
 				return errors.New("conditional field does not have value, check field tag")
 			}
