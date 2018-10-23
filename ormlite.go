@@ -200,7 +200,7 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 	var values []interface{}
 	q := fmt.Sprintf("select %s from %s", strings.Join(columns, ","), table)
 	if opts != nil {
-		if opts.Where != nil {
+		if opts.Where != nil && len(opts.Where) != 0 {
 			var keys []string
 			for k, v := range opts.Where {
 				if reflect.TypeOf(v).Kind() == reflect.Slice {
@@ -249,10 +249,9 @@ func getFieldColumnName(field reflect.StructField) string {
 	for _, pair := range pairs {
 		if strings.Contains(pair, "col") {
 			kv := strings.Split(pair, "=")
-			if len(kv) != 2 {
-				return ""
+			if len(kv) == 2 {
+				return kv[1]
 			}
-			return kv[1]
 		}
 	}
 	return strings.ToLower(field.Name)
@@ -458,6 +457,9 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 				relatedQueryConditions[strings.Join(PkField, ",")].([]interface{}), relatedPrimaryKeyValues...)
 		}
 	}
+	if len(relatedQueryConditions) == 0 {
+		return nil // query has no rows so there is no need to load any model
+	}
 	return QuerySliceContext(
 		ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1, Divider: options.Divider}, relatedQueryConditions),
 		rv.Addr().Interface(),
@@ -481,7 +483,7 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	var (
 		pkFields  []pkFieldInfo
 		columns   []string
-		fieldPtrs []interface{}
+		fieldPTRs []interface{}
 		relations = make(map[*relationInfo]reflect.Value)
 	)
 
@@ -504,13 +506,13 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 		if ri := extractRelationInfo(model.Type().Field(i)); ri != nil {
 			if ri.Type == hasOne {
 				columns = append(columns, getFieldColumnName(model.Type().Field(i)))
-				fieldPtrs = append(fieldPtrs, &ri.RefPkValue)
+				fieldPTRs = append(fieldPTRs, &ri.RefPkValue)
 			}
 			relations[ri] = model.Field(i)
 			continue
 		}
 		columns = append(columns, getFieldColumnName(model.Type().Field(i)))
-		fieldPtrs = append(fieldPtrs, model.Field(i).Addr().Interface())
+		fieldPTRs = append(fieldPTRs, model.Field(i).Addr().Interface())
 	}
 
 	if len(columns) == 0 && len(relations) != 0 {
@@ -524,7 +526,7 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 		}
 
 		for rows.Next() {
-			if err := rows.Scan(fieldPtrs...); err != nil {
+			if err := rows.Scan(fieldPTRs...); err != nil {
 				return err
 			}
 		}
@@ -753,7 +755,17 @@ func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*rel
 					continue
 				}
 				if lookForSetting(t, "primary") == "primary" {
-					refPkFieldValues = append(refPkFieldValues, relatedModel.Field(i).Interface())
+					if v, ok := relatedModel.Field(i).Interface().(Model); ok {
+						info, err := getPrimaryFieldsInfo(reflect.ValueOf(v).Elem())
+						if err != nil {
+							return errors.New("failed to get primary fields of related model")
+						}
+						for _, field := range info {
+							refPkFieldValues = append(refPkFieldValues, field.field.Interface())
+						}
+					} else {
+						refPkFieldValues = append(refPkFieldValues, relatedModel.Field(i).Interface())
+					}
 				}
 			}
 			refPkFieldValuesArr := reflect.New(reflect.ArrayOf(len(refPkFieldValues), reflect.TypeOf(refPkFieldValues).Elem())).Elem()

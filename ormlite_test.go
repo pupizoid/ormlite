@@ -245,6 +245,13 @@ type relatedModel struct {
 
 func (m *relatedModel) Table() string { return "related_model" }
 
+type relatedModelWithID struct {
+	ID    int64 `ormlite:"primary,ref=whatever"`
+	Field string
+}
+
+func (*relatedModelWithID) Table() string { return "related_model_with_id" }
+
 type modelHasOne struct {
 	ID      int64         `ormlite:"col=rowid,primary"`
 	Related *relatedModel `ormlite:"has_one,col=rel_id"`
@@ -259,6 +266,13 @@ type modelHasOneCycle struct {
 
 func (m *modelHasOneCycle) Table() string { return "one_to_one_cycle_rel" }
 
+type modelHasOneWithIDAndRef struct {
+	ID      int64               `ormlite:"col=rowid,primary"`
+	Related *relatedModelWithID `ormlite:"has_one,col=rel_id"`
+}
+
+func (*modelHasOneWithIDAndRef) Table() string { return "one_to_one_with_id_rel" }
+
 type hasOneRelationFixture struct {
 	suite.Suite
 	db *sql.DB
@@ -270,12 +284,16 @@ func (s *hasOneRelationFixture) SetupSuite() {
 
 	_, err = c.Exec(`
                 create table related_model ( field text );
+				create table related_model_with_id (id integer primary key, field text);
                 create table one_to_one_rel ( rel_id int );
 				create table one_to_one_cycle_rel (rel_id int);
+				create table one_to_one_with_id_rel (rel_id int);
 
                 insert into related_model (field) values('test'), ('test 2');
+                insert into related_model_with_id (field) values('id 1'), ('id 2');
                 insert into one_to_one_rel (rel_id) values(1), (null);
 				insert into one_to_one_cycle_rel (rel_id) values (1);
+				insert into one_to_one_with_id_rel (rel_id) values (2);
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -319,6 +337,13 @@ func (s *hasOneRelationFixture) TestRelationalDepth() {
 	require.NoError(s.T(), QuerySlice(s.db, &Options{RelationDepth: 2}, &cms))
 	assert.NotNil(s.T(), cms[0].Related.Related)
 	assert.Nil(s.T(), cms[0].Related.Related.Related)
+}
+
+func (s *hasOneRelationFixture) TestWithIDRelatedModel() {
+	var m modelHasOneWithIDAndRef
+	assert.NoError(s.T(), QueryStructContext(
+		context.Background(), s.db, &Options{Where: Where{"rowid": 1}, RelationDepth: 1}, &m))
+	assert.NotNil(s.T(), m.Related)
 }
 
 func TestHasOneRelation(t *testing.T) {
@@ -460,6 +485,8 @@ func (s *manyToManyRelationFixture) SetupSuite() {
 					primary key(first_id, second_id)
 				);
 				insert into model_with_compound_primary_key(first_id, second_id, field) values (1,1,'1'), (1,2,'2'), (2,1,'3');
+				-- mtm to compound with relation
+				
         `)
 	require.NoError(s.T(), err)
 	s.db = c
@@ -695,4 +722,106 @@ func TestWrongModels(t *testing.T) {
 	t.Run("TestDeleteModelWithZeroPK", func(t *testing.T) {
 		assert.Error(t, Delete(nil, &modelWithZeroPK{}))
 	})
+}
+
+type relatedModelFK struct {
+	ID    int64 `ormlite:"primary,ref=related_id"`
+	Field string
+}
+
+func (*relatedModelFK) Table() string { return "related_model" }
+
+type modelWithCompoundWithForeign struct {
+	FirstID int64           `ormlite:"primary,col=first_id,ref=first_id"`
+	Related *relatedModelFK `ormlite:"primary,col=second_id,ref=second_id,has_one"`
+	Name    string
+}
+
+func (*modelWithCompoundWithForeign) Table() string { return "complex_model" }
+
+type modelManyToManyWithCompoundWithForeign struct {
+	ID      int64 `ormlite:"primary,ref=m_id"`
+	Name    string
+	Related []*modelWithCompoundWithForeign `ormlite:"many_to_many,table=mapping,field=m_id"`
+}
+
+func (*modelManyToManyWithCompoundWithForeign) Table() string { return "model" }
+
+type mtmCompoundKeyAsHasOneRelationFixture struct {
+	suite.Suite
+	db *sql.DB
+}
+
+func (s *mtmCompoundKeyAsHasOneRelationFixture) SetupSuite() {
+	c, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(s.T(), err)
+
+	_, err = c.Exec(`
+                create table related_model(id integer primary key, field text);
+                insert into related_model(field) values('1'), ('2'), ('3'), ('4'), ('5');
+                
+				create table complex_model(
+					first_id integer primary key, 
+					second_id integer references related_model (id),
+					name text
+				);
+				insert into complex_model(second_id, name) values (1, '1'), (2, '2'), (3, '3');		
+
+				create table model(id integer primary key, name text);
+				insert into model(name) values ('1'), ('2'), ('3');
+
+				create table mapping(
+					m_id integer references model (id) on delete cascade, 
+					first_id integer,
+					second_id integer
+-- 					foreign key (first_id, second_id) references complex_model(first_id, second_id)
+				);
+				insert into mapping(m_id, first_id, second_id) values (1, 1, 1), (1, 3, 3);
+        `)
+	require.NoError(s.T(), err)
+	s.db = c
+}
+
+func (s *mtmCompoundKeyAsHasOneRelationFixture) Test() {
+	// test create
+	assert.NoError(s.T(), Upsert(s.db, &modelManyToManyWithCompoundWithForeign{
+		Name: "4",
+		Related: []*modelWithCompoundWithForeign{
+			{FirstID: 2, Related: &relatedModelFK{2, "2"}, Name: "2"},
+		},
+	}))
+	// test fetch
+	var m modelManyToManyWithCompoundWithForeign
+	assert.NoError(s.T(), QueryStructContext(
+		context.Background(), s.db, &Options{Where: Where{"id": 1}, RelationDepth: 2}, &m))
+	if assert.NotNil(s.T(), m.Related, "Relations were not loaded") {
+		assert.Equal(s.T(), 2, len(m.Related))
+	}
+	var mm []*modelManyToManyWithCompoundWithForeign
+	assert.NoError(s.T(), QuerySliceContext(
+		context.Background(), s.db, &Options{Where: Where{"id": 4}, RelationDepth: 2}, &mm))
+	if assert.NotNil(s.T(), mm) && assert.Equal(s.T(), 1, len(mm)) {
+		if assert.NotNil(s.T(), mm[0].Related) {
+			assert.Equal(s.T(), 1, len(mm[0].Related))
+		}
+	}
+	// test update
+	m.Related = []*modelWithCompoundWithForeign{
+		{FirstID: 3, Related: &relatedModelFK{3, "3"}, Name: "3"},
+	}
+	assert.NoError(s.T(), Upsert(s.db, &m))
+	var mNew modelManyToManyWithCompoundWithForeign
+	if assert.NoError(s.T(), QueryStructContext(
+		context.Background(), s.db, &Options{Where: Where{"id": 1}, RelationDepth: 2}, &mNew)) {
+		if assert.NotNil(s.T(), mNew.Related) {
+			assert.Equal(s.T(), 1, len(mNew.Related))
+			assert.Equal(s.T(), int64(3), mNew.Related[0].FirstID)
+		}
+	}
+	// delete
+	assert.NoError(s.T(), Delete(s.db, &m))
+}
+
+func TestCompoundKeyAsHasOneRelation(t *testing.T) {
+	suite.Run(t, new(mtmCompoundKeyAsHasOneRelationFixture))
 }
