@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cast"
 	"reflect"
 	"strings"
@@ -239,23 +240,6 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 		return nil, &Error{err, q, values}
 	}
 	return rows, nil
-}
-
-func getFieldColumnName(field reflect.StructField) string {
-	tag, ok := field.Tag.Lookup(packageTagName)
-	if !ok || tag == "" {
-		return strings.ToLower(field.Name)
-	}
-	pairs := strings.Split(tag, ",")
-	for _, pair := range pairs {
-		if strings.Contains(pair, "col") {
-			kv := strings.Split(pair, "=")
-			if len(kv) == 2 {
-				return kv[1]
-			}
-		}
-	}
-	return strings.ToLower(field.Name)
 }
 
 func getPrimaryFieldsInfo(value reflect.Value) ([]pkFieldInfo, error) {
@@ -1009,7 +993,7 @@ func reflectModel(m Model) (reflect.Value, reflect.Type, error) {
 	if ev.Kind() != reflect.Ptr {
 		return reflect.Value{}, nil, fmt.Errorf("model expected to be ptr, %v given", ev.Kind())
 	}
-
+	spew.Dump(ev.CanSet())
 	et := ev.Elem().Type()
 	if et.Kind() != reflect.Struct {
 		return reflect.Value{}, nil, fmt.Errorf("model expected to be a pointer to a struct, not to %v", et.Kind())
