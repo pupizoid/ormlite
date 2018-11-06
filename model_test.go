@@ -13,7 +13,7 @@ func TestGetModelValue(t *testing.T) {
 	_, err := getModelValue(&model{})
 	assert.NoError(t, err)
 	_, err = getModelValue(&[]*model{})
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	_, err = getModelValue(&[]struct{}{})
 	assert.Error(t, err)
 }

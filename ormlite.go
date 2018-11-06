@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/spf13/cast"
 	"reflect"
 	"strings"
 	"time"
@@ -122,10 +120,10 @@ func isExportedField(f reflect.StructField) bool {
 	return strings.ToLower(string([]rune(f.Name)[0])) != string([]rune(f.Name)[0])
 }
 
-func lookForSetting(s, setting string) string {
+func lookForSettingWithSep(s, setting, sep string) string {
 	pairs := strings.Split(s, ",")
 	for _, pair := range pairs {
-		kvs := strings.SplitN(pair, "=", 2)
+		kvs := strings.SplitN(pair, sep, 2)
 		if len(kvs) == 1 && kvs[0] == setting {
 			return setting
 		} else if len(kvs) == 2 && kvs[0] == setting {
@@ -133,6 +131,10 @@ func lookForSetting(s, setting string) string {
 		}
 	}
 	return ""
+}
+
+func lookForSetting(s, setting string) string {
+	return lookForSettingWithSep(s, setting, "=")
 }
 
 func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
@@ -184,10 +186,11 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 	} else if strings.Contains(t, "many_to_many") {
 		info.Type = manyToMany
 		tOption := lookForSetting(t, "table")
-		if strings.Contains(tOption, "(") {
-			info.Condition = tOption[strings.Index(tOption, "(")+1 : strings.Index(tOption, ")")]
-			tOption = tOption[:strings.Index(tOption, "(")]
-		}
+		//if strings.Contains(tOption, "(") {
+		//	info.Condition = tOption[strings.Index(tOption, "(")+1 : strings.Index(tOption, ")")]
+		//	tOption = tOption[:strings.Index(tOption, "(")]
+		//}
+		info.Condition = lookForSettingWithSep(t, "condition", ":")
 		info.Table = tOption
 		info.FieldName = lookForSetting(t, "field")
 	} else if strings.Contains(t, "has_many") {
@@ -650,353 +653,11 @@ func Delete(db *sql.DB, m Model) error {
 
 // Upsert does the same think as UpsertContext with default background context
 func Upsert(db *sql.DB, m Model) error {
-	return UpsertContext(context.Background(), db, m)
-}
-
-// UpsertContext inserts object into table or updates it's values if it's not exist or updates it
-func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
-	modelValue, modelType, err := reflectModel(m)
-	if err != nil {
-		return err
-	}
-
-	var (
-		pkInfo    []pkFieldInfo
-		relations = make(map[*relationInfo]interface{})
-	)
-
-	fields, values, err := parseQueryEntries(modelType, modelValue, &pkInfo, relations)
-	if err != nil {
-		return err
-	}
-
-	if len(fields) == 0 {
-		goto Relations
-	}
-
-	{
-		if err := upsertModel(ctx, db, pkInfo, fields, values, m); err != nil {
-			return err
-		}
-	}
-
-Relations:
-	return syncManyToManyRelations(ctx, db, relations, pkInfo)
-}
-
-func syncManyToManyRelations(ctx context.Context, db *sql.DB, relations map[*relationInfo]interface{}, pkFields []pkFieldInfo) error {
-	for rel, value := range relations {
-		refPkFieldNames, err := getRefPkFieldName(rel, value)
-		if err != nil {
-			return err
-		}
-
-		var (
-			where             []string
-			args              []interface{}
-			existingRelations = make(map[interface{}]bool)
-		)
-		if rel.FieldName != "" {
-			for _, i := range pkFields {
-				where = append(where, fmt.Sprintf("%s = ?", i.relationName))
-				args = append(args, i.field.Interface())
-			}
-			if rel.Condition != "" {
-				where = append(where, rel.Condition)
-			}
-		}
-		var whereClause string
-		if len(where) != 0 {
-			whereClause = "where " + strings.Join(where, " and ")
-		}
-
-		query := fmt.Sprintf(
-			"select %s from %s %s", strings.Join(refPkFieldNames, ","), rel.Table, whereClause)
-		rows, err := db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return &Error{err, query, args}
-		}
-		for rows.Next() {
-			var refPkKeys []interface{}
-			for i := 0; i < len(refPkFieldNames); i++ {
-				refPkKeys = append(refPkKeys, new(interface{}))
-			}
-			if err := rows.Scan(refPkKeys...); err != nil {
-				return err
-			}
-			refPkArr := reflect.New(reflect.ArrayOf(len(refPkKeys), reflect.TypeOf(refPkKeys).Elem())).Elem()
-			for i, j := range refPkKeys {
-				refPkArr.Index(i).Set(reflect.ValueOf(j).Elem())
-			}
-			existingRelations[refPkArr.Interface()] = false
-		}
-
-		for k := 0; k < reflect.ValueOf(value).Len(); k++ {
-			relatedModel := reflect.ValueOf(value).Index(k).Elem()
-			var refPkFieldValues []interface{} // todo: find a way to use multiple pk as map key
-			for i := 0; i < relatedModel.Type().NumField(); i++ {
-				t, ok := relatedModel.Type().Field(i).Tag.Lookup(packageTagName)
-				if !ok {
-					continue
-				}
-				if lookForSetting(t, "primary") == "primary" {
-					if v, ok := relatedModel.Field(i).Interface().(Model); ok {
-						info, err := getPrimaryFieldsInfo(reflect.ValueOf(v).Elem())
-						if err != nil {
-							return errors.New("failed to get primary fields of related model")
-						}
-						for _, field := range info {
-							refPkFieldValues = append(refPkFieldValues, field.field.Interface())
-						}
-					} else {
-						refPkFieldValues = append(refPkFieldValues, relatedModel.Field(i).Interface())
-					}
-				}
-			}
-			refPkFieldValuesArr := reflect.New(reflect.ArrayOf(len(refPkFieldValues), reflect.TypeOf(refPkFieldValues).Elem())).Elem()
-			for i, j := range refPkFieldValues {
-				refPkFieldValuesArr.Index(i).Set(reflect.ValueOf(j))
-			}
-			if _, ok := existingRelations[refPkFieldValuesArr.Interface()]; !ok {
-				if err := insertMissingRelation(ctx, db, refPkFieldValues, rel, refPkFieldNames, pkFields); err != nil {
-					return err
-				}
-			}
-			existingRelations[refPkFieldValuesArr.Interface()] = true
-		}
-		if err := deleteObsoleteRelations(ctx, db, existingRelations, refPkFieldNames, rel, pkFields); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func deleteObsoleteRelations(ctx context.Context, db *sql.DB, relMap map[interface{}]bool, refPkFields []string, rel *relationInfo, pkFields []pkFieldInfo) error {
-	for refPK, exists := range relMap {
-		if !exists {
-			var values []interface{}
-			for i := 0; i < reflect.ValueOf(refPK).Len(); i++ {
-				values = append(values, reflect.ValueOf(refPK).Index(i).Interface())
-			}
-			var fields []string
-			for _, refPkField := range refPkFields {
-				fields = append(fields, fmt.Sprintf("%s = ?", refPkField))
-			}
-			if rel.FieldName != "" {
-				for _, i := range pkFields {
-					fields = append(fields, i.relationName)
-					values = append(values, i.field.Interface())
-				}
-				if rel.Condition != "" {
-					fields = append(fields, rel.Condition)
-				}
-			}
-
-			query := fmt.Sprintf(
-				"delete from %s where %s", rel.Table, strings.Join(fields, AND))
-			res, err := db.ExecContext(ctx, query, values...)
-			if err != nil {
-				return &Error{err, query, values}
-			}
-			ra, err := res.RowsAffected()
-			if err != nil || ra == 0 {
-				return fmt.Errorf("failed to get rows affected of removed relations delete or it's 0 (%v)", err)
-			}
-		}
-	}
-	return nil
-}
-
-func insertMissingRelation(ctx context.Context, db *sql.DB, refPkKeys []interface{}, rel *relationInfo, refPkFields []string, pkFields []pkFieldInfo) error {
-	values := refPkKeys
-	fields := refPkFields
-	if rel.Condition != "" { // todo: implement support of most conditional operators
-		cond := strings.Split(rel.Condition, "=")
-		if cond[0] != "" {
-			fields = append(fields, cond[0])
-			if cond[1] != "" {
-				if strings.Contains(cond[1], "\"") {
-					values = append(values, cast.ToString(cond[1]))
-				} else {
-					values = append(values, cast.ToInt64(cond[1]))
-				}
-			} else {
-				return errors.New("conditional field does not have value, check field tag")
-			}
-		}
-
-	}
-	for _, i := range pkFields {
-		fields = append(fields, i.relationName)
-		values = append(values, i.field.Interface())
-	}
-
-	query := fmt.Sprintf(
-		"insert into %s(%s) values(%s)", rel.Table, strings.Join(fields, ","), strings.Trim(
-			strings.Repeat("?,", len(values)), ","))
-	res, err := db.ExecContext(ctx, query, values...)
-	if err != nil {
-		return &Error{err, query, values}
-	}
-	ra, err := res.RowsAffected()
-	if err != nil || ra == 0 {
-		return fmt.Errorf("failed to get rows affected of missing relations add or it's 0 (%v)", err)
-	}
-	return nil
-}
-
-func getRefPkFieldName(rel *relationInfo, i interface{}) ([]string, error) {
-	if rel.Table == "" {
-		return nil, errors.New("failed to process relations: not enough settings")
-	}
-	rv := reflect.ValueOf(i)
-	if rv.Kind() != reflect.Slice {
-		return nil, errors.New("failed to process relations: wrong field type")
-	}
-	rvt := rv.Type().Elem()
-	if rvt.Kind() != reflect.Ptr {
-		return nil, errors.New("failed to process relations: wrong field type")
-	}
-	rvs := rvt.Elem()
-	if rvs.Kind() != reflect.Struct {
-		return nil, errors.New("failed to process relations: wrong field type")
-	}
-	var refFieldName []string
-	for i := 0; i < rvs.NumField(); i++ {
-		tag, ok := rvs.Field(i).Tag.Lookup(packageTagName)
-		if !ok {
-			continue
-		}
-		if lookForSetting(tag, "primary") == "primary" {
-			field := lookForSetting(tag, "ref")
-			if field != "" {
-				refFieldName = append(refFieldName, field)
-			}
-		}
-	}
-	if len(refFieldName) == 0 {
-		return nil, errors.New("related type does not have primary key or reference field name")
-	}
-	return refFieldName, nil
+	return upsert(context.Background(), db, m)
 }
 
 type pkFieldInfo struct {
 	relationName string
 	name         string
 	field        reflect.Value
-}
-
-func upsertModel(ctx context.Context, db *sql.DB, info []pkFieldInfo, fields []string, values []interface{}, m Model) error {
-	var (
-		query      string
-		fieldPairs []string
-		indexes    []string
-	)
-	for _, f := range fields {
-		fieldPairs = append(fieldPairs, fmt.Sprintf("%s = ?", f))
-	}
-	for _, fi := range info {
-		if reflect.Zero(fi.field.Type()).Interface() != fi.field.Interface() {
-			fields = append(fields, fi.name)
-			values = append(values, fi.field.Interface())
-		}
-		indexes = append(indexes, fi.name)
-	}
-	values = append(values, values...)
-	query = fmt.Sprintf(
-		fmt.Sprintf("insert into %s(%s) values(%s) on conflict(%s) do update set %s",
-			m.Table(), strings.Join(fields, ","), strings.Trim(strings.Repeat("?,", len(fields)), ","),
-			strings.Join(indexes, ","), strings.Join(fieldPairs, ",")),
-	)
-	res, err := db.ExecContext(ctx, query, values...)
-	if err != nil {
-		return &Error{err, query, values}
-	}
-	ra, err := res.RowsAffected()
-	if err != nil || ra == 0 {
-		return errors.New("no rows were affected")
-	}
-	// if it was insert query - set new id to entry
-	if reflect.Zero(info[0].field.Type()).Interface() == info[0].field.Interface() {
-		iid, err := res.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("failed to get last inserted id: %v", err)
-		}
-		if info[0].field.Kind() != reflect.Int64 {
-			return errors.New("insert functionality can be used only for models with int64 primary keys")
-		}
-		info[0].field.SetInt(iid)
-	}
-	return nil
-}
-
-func parseQueryEntries(modelType reflect.Type, value reflect.Value, pkFields *[]pkFieldInfo, relations map[*relationInfo]interface{}) ([]string, []interface{}, error) {
-	var (
-		fields []string
-		values []interface{}
-	)
-
-	for i := 0; i < modelType.NumField(); i++ {
-		if !isExportedField(modelType.Field(i)) {
-			continue
-		}
-
-		fTag := modelType.Field(i).Tag.Get(packageTagName)
-		if fTag == "-" {
-			continue
-		}
-
-		if strings.Contains(fTag, "primary") {
-			var info pkFieldInfo
-			info.name = getFieldColumnName(modelType.Field(i))
-			info.relationName = lookForSetting(fTag, "ref")
-			info.field = value.Elem().Field(i)
-			*pkFields = append(*pkFields, info)
-			continue
-		}
-
-		if rInfo := extractRelationInfo(modelType.Field(i)); rInfo != nil {
-			switch rInfo.Type {
-			case hasOne:
-				refValue := reflect.ValueOf(value.Elem().Field(i).Interface())
-				if refValue.Kind() != reflect.Ptr {
-					return nil, nil, fmt.Errorf("one-to-one mtmRelations supports only pointer to struct, not %T", value.Elem().Field(i).Interface())
-				}
-				var refPkFieldValue interface{}
-				for i := 0; i < refValue.Type().Elem().NumField(); i++ {
-					if lookForSetting(refValue.Type().Elem().Field(i).Tag.Get(packageTagName), "primary") == "primary" {
-						if refValue.IsValid() && refValue.Elem().IsValid() {
-							refPkFieldValue = refValue.Elem().Field(i).Interface()
-						}
-					}
-				}
-				pkField := getFieldColumnName(modelType.Field(i))
-				if pkField == "" {
-					return nil, nil, errors.New("one-to-one related struct don't have primary key")
-				}
-				values = append(values, refPkFieldValue)
-				fields = append(fields, pkField)
-			case manyToMany:
-				relations[rInfo] = value.Elem().Field(i).Interface()
-			}
-			continue
-		}
-
-		fields = append(fields, getFieldColumnName(modelType.Field(i)))
-		values = append(values, value.Elem().Field(i).Interface())
-	}
-	return fields, values, nil
-}
-
-func reflectModel(m Model) (reflect.Value, reflect.Type, error) {
-	ev := reflect.ValueOf(m)
-	if ev.Kind() != reflect.Ptr {
-		return reflect.Value{}, nil, fmt.Errorf("model expected to be ptr, %v given", ev.Kind())
-	}
-	spew.Dump(ev.CanSet())
-	et := ev.Elem().Type()
-	if et.Kind() != reflect.Struct {
-		return reflect.Value{}, nil, fmt.Errorf("model expected to be a pointer to a struct, not to %v", et.Kind())
-	}
-	return ev, et, nil
 }

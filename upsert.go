@@ -1,6 +1,7 @@
 package ormlite
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"github.com/pkg/errors"
@@ -8,63 +9,229 @@ import (
 	"strings"
 )
 
+func sliceAsArray(s []interface{}) interface{} {
+	arr := reflect.New(reflect.ArrayOf(len(s), reflect.TypeOf(s).Elem())).Elem()
+	for i, j := range s {
+		v := reflect.ValueOf(j)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		arr.Index(i).Set(v)
+	}
+	return arr.Interface()
+}
+
+func buildJoinQuery(info *modelInfo, field modelField) (string, []interface{}, error) {
+	var (
+		query          = "select %s from %s %s"
+		where, columns []string
+		args           []interface{}
+		whereString    string
+	)
+	ri, err := getModelInfo(field.value)
+	if err != nil {
+		return "", nil, err
+	}
+	for _, f := range ri.fields {
+		if isPkField(f) {
+			columns = append(columns, field.reference.table+"."+f.reference.column)
+		}
+	}
+	for _, f := range info.fields {
+		if isPkField(f) {
+			where = append(where,
+				fmt.Sprintf("%s.%s = ?", field.reference.table, f.reference.column))
+			args = append(args, f.value.Interface())
+		}
+	}
+	if field.reference.condition != "" {
+		where = append(where, field.reference.condition)
+	}
+	if len(where) > 0 {
+		whereString = "where " + strings.Join(where, AND)
+	}
+	return fmt.Sprintf(
+		query, strings.Join(columns, ","), field.reference.table, whereString), args, nil
+}
+
 func buildUpsertQuery(info *modelInfo) (string, []interface{}) {
 	var (
-		query                         = "insert into %s(%s) values(%s) on conflict(%s) do update set %s"
-		fields, indexes, updateFields []string
-		args                          []interface{}
+		query        = "insert into %s(%s) values(%s) on conflict(%s) do update set %s"
+		updateFields []string
+		args         []interface{}
 	)
-	for _, field := range info.fields {
-		switch {
-		case isReferenceField(field):
-			if field.reference.Type != "has_one" {
-				continue
-			}
-			fallthrough
-		case isPkField(field):
-			indexes = append(indexes, field.column)
-			if isZeroField(field.value) {
-				continue
-			}
-			fallthrough
-		default:
-			fields = append(fields, field.column)
-			updateFields = append(updateFields, fmt.Sprintf("%s = ?", field.column))
-		}
-		args = append(args, field.value.Interface())
+	columns, indexes, args := getModelColumns(info.fields)
+	for _, f := range columns {
+		updateFields = append(updateFields, fmt.Sprintf("%s = ?", f))
 	}
 	args = append(args, args...)
 	return fmt.Sprintf(
-		query, info.table, strings.Join(fields, ","),
-		strings.Trim(strings.Repeat("?,", len(fields)), ","),
+		query, info.table, strings.Join(columns, ","),
+		strings.Trim(strings.Repeat("?,", len(columns)), ","),
 		strings.Join(indexes, ","), strings.Join(updateFields, ",")), args
 }
 
-func upsert(db *sql.DB, m IModel) error {
+func buildInsertRelationQuery(field modelField, info *modelInfo, values []interface{}, columns []string) (string, []interface{}) {
+	var (
+		query = "insert into %s(%s) values (%s)"
+	)
+
+	cond, condValue := extractConditionValue(field.reference.condition)
+	if cond != "" {
+		columns = append(columns, cond)
+		values = append(values, condValue)
+	}
+
+	for _, f := range info.fields {
+		if isPkField(f) {
+			columns = append(columns, f.reference.column)
+			values = append(values, f.value.Interface())
+		}
+	}
+	return fmt.Sprintf(query, field.reference.table, strings.Join(columns, ","),
+		strings.Trim(strings.Repeat("?,", len(columns)), ",")), values
+}
+
+func buildDeleteRelationQuery(field modelField, info *modelInfo, keys interface{}, columns []string) (string, []interface{}) {
+	var (
+		args  []interface{}
+		where []string
+		query = "delete from %s where %s"
+		kVal  = reflect.ValueOf(keys)
+	)
+
+	for _, col := range columns {
+		where = append(where, fmt.Sprintf("%s = ?", col))
+	}
+
+	for i := 0; i < kVal.Len(); i++ {
+		args = append(args, kVal.Index(i).Interface())
+	}
+
+	for _, f := range info.fields {
+		if isPkField(f) {
+			where = append(where, fmt.Sprintf("%s = ?", f.reference.column))
+			args = append(args, f.value.Interface())
+		}
+	}
+
+	cond, condValue := extractConditionValue(field.reference.condition)
+	if cond != "" {
+		where = append(where, fmt.Sprintf("%s = ?", cond))
+		args = append(args, condValue)
+	}
+	return fmt.Sprintf(query, field.reference.table, strings.Join(where, AND)), args
+}
+
+func syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
+	for _, field := range info.fields {
+		if isManyToMany(field) {
+			if err := syncManyToManyRelation(ctx, db, field, info); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func getRelationMapping(value reflect.Value) ([][]interface{}, error) {
+	var r [][]interface{}
+	for i := 0; i < value.Len(); i++ {
+		keys, err := getModelPkKeys(value.Index(i).Interface())
+		if err != nil {
+			return nil, err
+		}
+		r = append(r, keys)
+	}
+	return r, nil
+}
+
+func getStoredRelations(ctx context.Context, db *sql.DB, field modelField, info *modelInfo) ([]string, map[interface{}]bool, error) {
+	q, a, err := buildJoinQuery(info, field)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, q, a...)
+	if err != nil {
+		return nil, nil, &Error{err, q, a}
+	}
+
+	cols, err := rows.Columns()
+	var result = map[interface{}]bool{}
+
+	for rows.Next() {
+		var keys []interface{}
+		for i := 0; i < len(cols); i++ {
+			keys = append(keys, new(interface{}))
+		}
+		if err := rows.Scan(keys...); err != nil {
+			return nil, nil, err
+		}
+		result[sliceAsArray(keys)] = false
+	}
+	return cols, result, nil
+}
+
+func syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, info *modelInfo) error {
+	refValues, err := getRelationMapping(field.value)
+	if err != nil {
+		return err
+	}
+
+	refColumns, mapping, err := getStoredRelations(ctx, db, field, info)
+	if err != nil {
+		return err
+	}
+	// mark existing relations in mapping
+	for _, keys := range refValues {
+		if _, ok := mapping[sliceAsArray(keys)]; !ok {
+			// missing relation we need to add it
+			q, a := buildInsertRelationQuery(field, info, keys, refColumns)
+
+			if res, err := db.ExecContext(ctx, q, a...); err != nil {
+				return &Error{err, q, a}
+			} else {
+				if ra, err := res.RowsAffected(); err != nil || ra == 0 {
+					return errors.New("insert query din't affect any row")
+				}
+			}
+		}
+		mapping[sliceAsArray(keys)] = true
+	}
+	for keys, exists := range mapping {
+		if !exists {
+			q, a := buildDeleteRelationQuery(field, info, keys, refColumns)
+			if res, err := db.ExecContext(ctx, q, a...); err != nil {
+				return &Error{err, q, a}
+			} else {
+				if ra, err := res.RowsAffected(); err != nil || ra == 0 {
+					return errors.New("delete query din't affect any row")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func upsert(ctx context.Context, db *sql.DB, m IModel) error {
 	mInfo, err := getModelInfo(m)
 	if err != nil {
 		return err
 	}
 
 	q, a := buildUpsertQuery(mInfo)
-	result, err := db.Exec(q, a...)
-	if err != nil {
-		return &Error{err, q, a}
-	}
-	// check if there were last inserted id and apply it to primary key
-	for _, field := range mInfo.fields {
-		if isPkField(field) && !isReferenceField(field) {
-			if isZeroField(field.value) {
-				id, err := result.LastInsertId()
-				if err != nil {
-					return err
-				}
-				if field.value.Type().Kind() != reflect.Int64 {
-					return errors.New("primary key is not int64")
-				}
-				field.value.SetInt(id)
-			}
+	if len(a) > 0 {
+		// we need to perform update query only for models that have fields
+		result, err := db.ExecContext(ctx, q, a...)
+		if err != nil {
+			return &Error{err, q, a}
+		}
+
+		if err := setModelPk(mInfo, result); err != nil {
+			return err
 		}
 	}
-	return nil
+
+	return syncRelations(ctx, db, mInfo)
 }

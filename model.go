@@ -1,11 +1,13 @@
 package ormlite
 
 import (
+	"database/sql"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/iancoleman/strcase"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 	"reflect"
+	"strings"
 )
 
 type IModel interface {
@@ -17,6 +19,7 @@ type fieldType int
 const (
 	regularField fieldType = 1 << iota
 	referenceField
+	omittedField
 	pkField
 )
 
@@ -32,7 +35,23 @@ func isZeroField(field reflect.Value) bool {
 	return field.Interface() == reflect.Zero(field.Type()).Interface()
 }
 
-type modelFieldReference struct {
+func isOmittedField(field modelField) bool {
+	return field.Type&omittedField == omittedField
+}
+
+func isHasOne(field modelField) bool {
+	return field.reference.Type == "has_one"
+}
+
+func isHasMany(field modelField) bool {
+	return field.reference.Type == "has_many"
+}
+
+func isManyToMany(field modelField) bool {
+	return field.reference.Type == "many_to_many"
+}
+
+type fieldReference struct {
 	Type      string
 	rType     reflect.Type
 	table     string
@@ -43,7 +62,7 @@ type modelFieldReference struct {
 type modelField struct {
 	Type      fieldType
 	column    string
-	reference modelFieldReference
+	reference fieldReference
 	value     reflect.Value
 }
 
@@ -55,9 +74,10 @@ type modelInfo struct {
 
 // Check if given interface is a Model or slice of Models
 func getModelValue(o interface{}) (reflect.Value, error) {
-	spew.Dump(o)
-	value := reflect.ValueOf(o)
-	fmt.Printf("settable value: %v\n", value.CanSet())
+	value, ok := o.(reflect.Value)
+	if !ok {
+		value = reflect.ValueOf(o)
+	}
 	switch value.Kind() {
 	case reflect.Struct:
 		if _, ok := reflect.New(value.Type()).Interface().(IModel); ok {
@@ -65,9 +85,18 @@ func getModelValue(o interface{}) (reflect.Value, error) {
 		}
 		return value, errors.New("given object does not meet Model interface")
 	case reflect.Ptr:
-		return getModelValue(value.Elem().Interface())
+		return getModelValue(value.Elem())
+	case reflect.Slice:
+		if value.Len() == 0 {
+			elemType := value.Type().Elem()
+			if elemType.Kind() == reflect.Ptr {
+				return getModelValue(reflect.New(elemType.Elem()).Elem())
+			}
+			return value, errors.Errorf("slice should contain pointers to model")
+		}
+		return getModelValue(value.Index(0))
 	default:
-		return value, errors.Errorf("expected pointer, got %T", o)
+		return value, errors.Errorf("expected pointer to model, got %T (kind: %v)", o, value.Kind())
 	}
 }
 
@@ -85,7 +114,7 @@ func getFieldColumnName(field reflect.StructField) string {
 
 func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 	var (
-		mField = modelField{Type: regularField}
+		mField = modelField{}
 		field  = mValue.Type().Field(fIndex)
 		tag    = field.Tag.Get(packageTagName)
 	)
@@ -98,15 +127,20 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 	case lookForSetting(tag, "many_to_many") != "":
 		mField.reference.Type = "many_to_many"
 		mField.reference.table = lookForSetting(tag, "table")
-		mField.reference.condition = lookForSetting(tag, "condition")
-		mField.Type += referenceField
-	case lookForSetting(tag, "has_one") != "":
-		mField.reference.Type = "has_one"
+		mField.reference.condition = lookForSettingWithSep(tag, "condition", ":")
 		mField.Type += referenceField
 	case lookForSetting(tag, "has_many") != "":
 		mField.reference.Type = "has_many"
 		mField.Type += referenceField
-	case lookForSetting(tag, "primary") != "":
+	case lookForSetting(tag, "has_one") != "":
+		mField.reference.Type = "has_one"
+		mField.Type += referenceField
+	case tag == "-":
+		mField.Type += omittedField
+	default:
+		mField.Type += regularField
+	}
+	if lookForSetting(tag, "primary") != "" {
 		mField.Type += pkField
 	}
 	return mField, nil
@@ -119,9 +153,14 @@ func getModelInfo(o interface{}) (*modelInfo, error) {
 		return nil, err
 	}
 
-	var mi = modelInfo{table: o.(IModel).Table()}
+	var mi = modelInfo{
+		table: reflect.New(mv.Type()).Interface().(IModel).Table(),
+	}
 
 	for i := 0; i < mv.NumField(); i++ {
+		if !mv.Field(i).CanInterface() {
+			continue // skip unexported fields
+		}
 		mf, err := getFieldInfo(mv, i)
 		if err != nil {
 			return nil, err
@@ -129,4 +168,138 @@ func getModelInfo(o interface{}) (*modelInfo, error) {
 		mi.fields = append(mi.fields, mf)
 	}
 	return &mi, nil
+}
+
+func setModelPk(info *modelInfo, result sql.Result) error {
+	// check if there were last inserted id and apply it to primary key
+	for _, field := range info.fields {
+		if isPkField(field) && !isReferenceField(field) {
+			if isZeroField(field.value) {
+				id, err := result.LastInsertId()
+				if err != nil {
+					return err
+				}
+				if field.value.Type().Kind() != reflect.Int64 {
+					return errors.New("primary key is not int64")
+				}
+				field.value.SetInt(id)
+			}
+		}
+	}
+	return nil
+}
+
+// Returns pointer to a int64 value as a primary key of referenced model,
+// if model does not have primary field or it's not int64 type or is a zero
+// value nil will be returned.
+func getRefModelPk(field modelField) *int64 {
+	if field.value.IsNil() {
+		return nil
+	}
+	mi, err := getModelInfo(field.value.Interface())
+	if err != nil {
+		return nil
+	}
+	for _, field := range mi.fields {
+		if isPkField(field) {
+			if !isZeroField(field.value) {
+				if field.value.Kind() == reflect.Int64 {
+					return field.value.Addr().Interface().(*int64)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func getModelPkKeys(o interface{}) ([]interface{}, error) {
+	mi, err := getModelInfo(o)
+	if err != nil {
+		return nil, err
+	}
+	var keys []interface{}
+	for _, field := range mi.fields {
+		if isPkField(field) {
+			if isHasOne(field) {
+				sub, err := getModelPkKeys(field.value)
+				if err != nil {
+					return nil, err
+				}
+				keys = append(keys, sub...)
+			} else {
+				keys = append(keys, field.value.Interface())
+			}
+		}
+	}
+	return keys, nil
+}
+
+func getModelPkFields(o interface{}) ([]modelField, error) {
+	mi, err := getModelInfo(o)
+	if err != nil {
+		return nil, err
+	}
+	var fields []modelField
+	for _, field := range mi.fields {
+		if isPkField(field) {
+			fields = append(fields, field)
+		}
+	}
+	return fields, nil
+}
+
+func extractConditionValue(s string) (string, interface{}) {
+	var (
+		cond  = strings.Split(s, "=")
+		field string
+		value interface{}
+	)
+	field = cond[0]
+	if len(cond) > 1 {
+		if cond[1] != "" {
+			if strings.Contains(cond[1], "\"") {
+				value = cast.ToString(cond[1])
+			} else {
+				value = cast.ToInt64(cond[1])
+			}
+		}
+	}
+	return field, value
+}
+
+func getModelJoinCondition(info *modelInfo, rTable string) string {
+	var cond []string
+	for _, field := range info.fields {
+		if isPkField(field) {
+			cond = append(cond,
+				fmt.Sprintf("%s.%s = %s.%s", rTable, field.reference.column, info.table, field.column))
+		}
+	}
+	return strings.Join(cond, AND)
+}
+
+func getModelColumns(fields []modelField) ([]string, []string, []interface{}) {
+	var (
+		columns, indexes []string
+		args             []interface{}
+	)
+	for _, field := range fields {
+		if isOmittedField(field) ||
+			isReferenceField(field) && !isHasOne(field) {
+			continue
+		}
+		if isPkField(field) {
+			indexes = append(indexes, field.column)
+			if isZeroField(field.value) {
+				continue
+			}
+		}
+		columns = append(columns, field.column)
+		if isHasOne(field) {
+			args = append(args, getRefModelPk(field))
+		} else {
+			args = append(args, field.value.Interface())
+		}
+	}
+	return columns, indexes, args
 }

@@ -13,7 +13,7 @@ import (
 )
 
 type simpleModel struct {
-	ID               int64 `ormlite:"col=rowid,primary"`
+	ID               int64 `ormlite:"primary"`
 	NotTaggedField   string
 	TaggedField      string `ormlite:"col=tagged_field"`
 	OmittedField     string `ormlite:"-"`
@@ -25,7 +25,7 @@ func (*simpleModel) Table() string { return "simple_model" }
 var _ Model = (*simpleModel)(nil)
 
 type simpleModelWithRelation struct {
-	ID             int64 `ormlite:"col=rowid,primary"`
+	ID             int64 `ormlite:"primary"`
 	NotTaggedField string
 	Related        *simpleModel `ormlite:"has_one,col=related_id"`
 }
@@ -33,7 +33,7 @@ type simpleModelWithRelation struct {
 func (sm *simpleModelWithRelation) Table() string { return "simple_model_has_one" }
 
 type simpleModelWithCycleRelation struct {
-	ID             int64 `ormlite:"col=rowid,primary"`
+	ID             int64 `ormlite:"primary"`
 	NotTaggedField string
 	Related        *simpleModelWithCycleRelation `ormlite:"has_one,col=related_id"`
 }
@@ -51,31 +51,34 @@ func (s *simpleModelFixture) SetupSuite() {
 
 	_, err = c.Exec(`
                 create table simple_model (
-                        nottaggedfield text,
+						id integer primary key,
+                        not_tagged_field text,
                         tagged_field text
 				);
 				
 				create table simple_model_has_one (
-					nottaggedfield text,
+					id integer primary key,
+					not_tagged_field text,
 					related_id int
 				);
 
 				create table simple_model_has_one_cycle (
-					nottaggedfield text,
+					id integer primary key,
+					not_tagged_field text,
 					related_id int
 				);
 
-                insert into simple_model(nottaggedfield, tagged_field) values
+                insert into simple_model(not_tagged_field, tagged_field) values
 					('test', 'test tagged'),
 					('asdad', 'assddffgh'),
 					('1111', '22222');
 						
-				insert into simple_model_has_one(nottaggedfield, related_id) values 
+				insert into simple_model_has_one(not_tagged_field, related_id) values 
 					('test', null),
 					('test 2 ', 1),
 					('test 3 ', 2);
 
-				insert into simple_model_has_one_cycle(nottaggedfield, related_id) values 
+				insert into simple_model_has_one_cycle(not_tagged_field, related_id) values 
 					('test', 1);
         `)
 	assert.NoError(s.T(), err)
@@ -123,14 +126,16 @@ func (s *simpleModelFixture) TestQuerySlice() {
 func (s *simpleModelFixture) TestQuerySliceWithRelations() {
 	var mm []*simpleModelWithRelation
 	assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
-	assert.NotEmpty(s.T(), mm)
-	assert.Nil(s.T(), mm[0].Related)
-	if assert.NotNil(s.T(), mm[1].Related) {
-		assert.Equal(s.T(), mm[1].Related.TaggedField, "test tagged")
+	if assert.NotEmpty(s.T(), mm) {
+		assert.Nil(s.T(), mm[0].Related)
+		if assert.NotNil(s.T(), mm[1].Related) {
+			assert.Equal(s.T(), mm[1].Related.TaggedField, "test tagged")
+		}
+		if assert.NotNil(s.T(), mm[2].Related) {
+			assert.Equal(s.T(), mm[2].Related.TaggedField, "assddffgh")
+		}
 	}
-	if assert.NotNil(s.T(), mm[2].Related) {
-		assert.Equal(s.T(), mm[2].Related.TaggedField, "assddffgh")
-	}
+
 }
 
 func (s *simpleModelFixture) TestQuerySliceWithCycleRelation() {
@@ -428,8 +433,8 @@ func (*modelManyToMany) Table() string { return "mtm_model" }
 type modelManyToManyWithCondition struct {
 	ID           int64 `ormlite:"col=rowid,primary,ref=m_id"`
 	Name         string
-	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=0),field=m_id"`
-	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition(value=1),field=m_id"`
+	RelatedFalse []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition,field=m_id,condition:value=0"`
+	RelatedTrue  []*relatedModel `ormlite:"many_to_many,table=mtm_with_condition,field=m_id,condition:value=1"`
 }
 
 func (*modelManyToManyWithCondition) Table() string { return "mtm_model" }
@@ -507,7 +512,7 @@ func (s *manyToManyRelationFixture) TestQueryStruct() {
 	var mc modelManyToManyWithCondition
 	if assert.NoError(s.T(), QueryStruct(
 		s.db, WithWhere(DefaultOptions(), Where{"name": "name"}), &mc)) {
-		assert.Equal(s.T(), modelManyToManyWithCondition{
+		assert.EqualValues(s.T(), modelManyToManyWithCondition{
 			ID: 1, Name: "name",
 			RelatedFalse: []*relatedModel{{1, "test 1"}},
 			RelatedTrue:  []*relatedModel{{1, "test 1"}, {2, "test 2"}, {3, "test 3"}},
@@ -569,7 +574,7 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 		assert.NotEqual(s.T(), 1, r.ID)
 	}
 	m2 := modelManyToMany{Name: "test", Related: []*relatedModel{{ID: 1}}}
-	require.NoError(s.T(), Upsert(s.db, &m2))
+	assert.NoError(s.T(), Upsert(s.db, &m2))
 	var c int
 	rows, err := s.db.Query("select count(*) from mtm")
 	require.NoError(s.T(), err)
@@ -592,7 +597,7 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 		RelatedFalse: []*relatedModel{{1, "test 1"}, {3, "test 3"}},
 		RelatedTrue:  []*relatedModel{{2, "test 2"}, {3, "test 3"}},
 	}
-	require.NoError(s.T(), Upsert(s.db, &mc))
+	assert.NoError(s.T(), Upsert(s.db, &mc))
 	var mc1 modelManyToManyWithCondition
 	if assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": mc.ID}), &mc1)) {
 		assert.Equal(s.T(), mc, mc1)
@@ -680,7 +685,7 @@ func (s *modelMultiTableFixture) TestUpsert() {
 		One: []*relatedModel{{ID: 1}},
 		Two: []*relatedModel{{ID: 1}, {ID: 2}, {ID: 3}},
 	}
-	require.NoError(s.T(), Upsert(s.db, &m))
+	assert.NoError(s.T(), Upsert(s.db, &m))
 	var c int
 	rows, err := s.db.Query("select count(*) from two")
 	require.NoError(s.T(), err)

@@ -1,6 +1,7 @@
 package ormlite
 
 import (
+	"context"
 	"database/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,9 +33,23 @@ func (s *baseModelFixture) SetupSuite() {
 
 func (s *baseModelFixture) TestInsert() {
 	var m = baseModel{Field: "test"}
-	err := upsert(s.db, &m)
-	if assert.NoError(s.T(), err) {
+	if assert.NoError(s.T(), upsert(context.Background(), s.db, &m)) {
 		assert.EqualValues(s.T(), 1, m.ID)
+	}
+}
+
+func (s *baseModelFixture) TestUpsert() {
+	var m = baseModel{ID: 1, Field: "test 2"}
+	if assert.NoError(s.T(), upsert(context.Background(), s.db, &m)) {
+		// check db really changed
+		rows, err := s.db.Query("select field from base_model where id = ?", m.ID)
+		if assert.NoError(s.T(), err) {
+			for rows.Next() {
+				var field string
+				assert.NoError(s.T(), rows.Scan(&field))
+				assert.EqualValues(s.T(), m.Field, field)
+			}
+		}
 	}
 }
 
