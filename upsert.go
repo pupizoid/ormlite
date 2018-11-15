@@ -129,6 +129,14 @@ func syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
 			if err := syncManyToManyRelation(ctx, db, field, info); err != nil {
 				return err
 			}
+		} else if isHasOne(field) {
+			if err := syncHasOneRelation(ctx, db, field); err != nil {
+				return err
+			}
+		} else if isHasMany(field) {
+			if err := syncHasManyRelation(ctx, db, field, info); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -209,6 +217,37 @@ func syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, i
 					return errors.New("delete query din't affect any row")
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func syncHasOneRelation(ctx context.Context, db *sql.DB, field modelField) error {
+	if !field.value.IsValid() || field.value.IsNil() {
+		return nil
+	}
+	return upsert(ctx, db, field.value.Interface().(IModel))
+}
+
+func syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, model *modelInfo) error {
+	if !field.value.IsValid() || field.value.IsNil() {
+		return nil
+	}
+	if field.value.Type().Kind() != reflect.Slice {
+		return errors.New("has many relation value should be slice containing models")
+	}
+	for i := 0; i < field.value.Len(); i++ {
+		ri, err := getModelInfo(field.value.Index(i))
+		if err != nil {
+			return err
+		}
+		for _, f := range ri.fields {
+			if model.value.Type().AssignableTo(f.value.Type()) {
+				f.value.Set(model.value)
+			}
+		}
+		if err := upsert(ctx, db, ri.value.Addr().Interface().(IModel)); err != nil {
+			return err
 		}
 	}
 	return nil

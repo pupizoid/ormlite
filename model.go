@@ -2,7 +2,6 @@ package ormlite
 
 import (
 	"database/sql"
-	"fmt"
 	"github.com/iancoleman/strcase"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
@@ -121,7 +120,6 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 	mField.column = getFieldColumnName(field)
 	mField.value = mValue.Field(fIndex)
 	mField.reference.rType = field.Type
-	mField.reference.column = lookForSetting(tag, "ref")
 	// parse references
 	switch {
 	case lookForSetting(tag, "many_to_many") != "":
@@ -141,6 +139,7 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 		mField.Type += regularField
 	}
 	if lookForSetting(tag, "primary") != "" {
+		mField.reference.column = lookForSetting(tag, "ref")
 		mField.Type += pkField
 	}
 	return mField, nil
@@ -155,6 +154,7 @@ func getModelInfo(o interface{}) (*modelInfo, error) {
 
 	var mi = modelInfo{
 		table: reflect.New(mv.Type()).Interface().(IModel).Table(),
+		value: mv,
 	}
 
 	for i := 0; i < mv.NumField(); i++ {
@@ -234,20 +234,6 @@ func getModelPkKeys(o interface{}) ([]interface{}, error) {
 	return keys, nil
 }
 
-func getModelPkFields(o interface{}) ([]modelField, error) {
-	mi, err := getModelInfo(o)
-	if err != nil {
-		return nil, err
-	}
-	var fields []modelField
-	for _, field := range mi.fields {
-		if isPkField(field) {
-			fields = append(fields, field)
-		}
-	}
-	return fields, nil
-}
-
 func extractConditionValue(s string) (string, interface{}) {
 	var (
 		cond  = strings.Split(s, "=")
@@ -265,17 +251,6 @@ func extractConditionValue(s string) (string, interface{}) {
 		}
 	}
 	return field, value
-}
-
-func getModelJoinCondition(info *modelInfo, rTable string) string {
-	var cond []string
-	for _, field := range info.fields {
-		if isPkField(field) {
-			cond = append(cond,
-				fmt.Sprintf("%s.%s = %s.%s", rTable, field.reference.column, info.table, field.column))
-		}
-	}
-	return strings.Join(cond, AND)
 }
 
 func getModelColumns(fields []modelField) ([]string, []string, []interface{}) {

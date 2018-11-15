@@ -327,7 +327,7 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 		assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m.ID}), m))
 	}
 	assert.Equal(s.T(), int64(2), mm[2].Related.ID)
-	assert.Equal(s.T(), "test 2", mm[2].Related.Field)
+	assert.Equal(s.T(), "lol", mm[2].Related.Field)
 	//
 	assert.NoError(s.T(), Delete(s.db, mm[0]))
 }
