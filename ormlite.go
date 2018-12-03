@@ -645,7 +645,7 @@ func Delete(db *sql.DB, m Model) error {
 		return errors.Wrap(err, "delete failed")
 	}
 	if ra == 0 {
-		return ErrNoRowsAffected
+		return &Error{ErrNoRowsAffected, query, args}
 	}
 
 	return nil

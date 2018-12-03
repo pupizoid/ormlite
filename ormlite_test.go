@@ -113,7 +113,7 @@ func (s *simpleModelFixture) TestCRUD() {
 func (s *simpleModelFixture) TestDeleteMissing() {
 	err := Delete(s.db, &simpleModel{ID: 4})
 	if assert.Error(s.T(), err) {
-		assert.Equal(s.T(), ErrNoRowsAffected, err)
+		assert.Equal(s.T(), ErrNoRowsAffected.Error(), err.Error())
 	}
 }
 
