@@ -100,7 +100,8 @@ func (s *simpleModelFixture) TestCRUD() {
 	assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m1.ID}), &m2))
 	assert.Equal(s.T(), m1, m2)
 
-	assert.NoError(s.T(), Delete(s.db, &m2))
+	_, err := Delete(s.db, &m2)
+	assert.NoError(s.T(), err)
 
 	var m3 = simpleModelWithRelation{NotTaggedField: "some not tagged field"}
 	assert.NoError(s.T(), Upsert(s.db, &m3))
@@ -108,13 +109,6 @@ func (s *simpleModelFixture) TestCRUD() {
 	var m4 simpleModelWithRelation
 	assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m3.ID}), &m4))
 	assert.Nil(s.T(), m4.Related)
-}
-
-func (s *simpleModelFixture) TestDeleteMissing() {
-	err := Delete(s.db, &simpleModel{ID: 4})
-	if assert.Error(s.T(), err) {
-		assert.Equal(s.T(), ErrNoRowsAffected.Error(), err.Error())
-	}
 }
 
 func (s *simpleModelFixture) TestQuerySlice() {
@@ -232,7 +226,8 @@ func (s *modelWithCompoundPrimaryKeyFixture) TestCUpdate() {
 }
 
 func (s *modelWithCompoundPrimaryKeyFixture) TestDelete() {
-	assert.NoError(s.T(), Delete(s.db, &modelWithCompoundPrimaryKey{1, 1, ""}))
+	_, err := Delete(s.db, &modelWithCompoundPrimaryKey{1, 1, ""})
+	assert.NoError(s.T(), err)
 	var mm []*modelWithCompoundPrimaryKey
 	if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm)) {
 		assert.Equal(s.T(), 2, len(mm))
@@ -329,7 +324,8 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 	assert.Equal(s.T(), int64(2), mm[2].Related.ID)
 	assert.Equal(s.T(), "lol", mm[2].Related.Field)
 	//
-	assert.NoError(s.T(), Delete(s.db, mm[0]))
+	_, err := Delete(s.db, mm[0])
+	assert.NoError(s.T(), err)
 }
 
 func (s *hasOneRelationFixture) TestRelationalDepth() {
@@ -582,7 +578,9 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 		require.NoError(s.T(), rows.Scan(&c))
 	}
 	assert.Equal(s.T(), 3, c)
-	assert.NoError(s.T(), Delete(s.db, &m2))
+
+	_, err = Delete(s.db, &m2)
+	assert.NoError(s.T(), err)
 	// insert new model
 	var m3 = modelManyToMany{
 		Name:    "new model",
@@ -633,7 +631,8 @@ func (s *manyToManyRelationFixture) TestCompoundKeys() {
 		}
 	}
 	// test delete
-	assert.NoError(s.T(), Delete(s.db, &m))
+	_, err := Delete(s.db, &m)
+	assert.NoError(s.T(), err)
 }
 
 func TestManyToManyRelation(t *testing.T) {
@@ -701,7 +700,8 @@ func (s *modelMultiTableFixture) TestUpsert() {
 }
 
 func (s *modelMultiTableFixture) TestDelete() {
-	assert.Error(s.T(), Delete(s.db, new(modelMultiTable)))
+	_, err := Delete(s.db, new(modelMultiTable))
+	assert.Error(s.T(), err)
 }
 
 func TestMultiTableModel(t *testing.T) {
@@ -722,10 +722,12 @@ func (*modelWithZeroPK) Table() string { return "" }
 
 func TestWrongModels(t *testing.T) {
 	t.Run("TestDeleteModelWithoutPK", func(t *testing.T) {
-		assert.Error(t, Delete(nil, &modelWithoutPK{1}))
+		_, err := Delete(nil, &modelWithoutPK{1})
+		assert.Error(t, err)
 	})
 	t.Run("TestDeleteModelWithZeroPK", func(t *testing.T) {
-		assert.Error(t, Delete(nil, &modelWithZeroPK{}))
+		_, err := Delete(nil, &modelWithZeroPK{})
+		assert.Error(t, err)
 	})
 }
 
@@ -824,7 +826,8 @@ func (s *mtmCompoundKeyAsHasOneRelationFixture) Test() {
 		}
 	}
 	// delete
-	assert.NoError(s.T(), Delete(s.db, &m))
+	_, err := Delete(s.db, &m)
+	assert.NoError(s.T(), err)
 }
 
 func TestCompoundKeyAsHasOneRelation(t *testing.T) {

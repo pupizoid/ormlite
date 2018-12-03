@@ -598,7 +598,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 }
 
 // Delete removes model object from database by it's primary key
-func Delete(db *sql.DB, m Model) error {
+func Delete(db *sql.DB, m Model) (sql.Result, error) {
 	modelValue := reflect.ValueOf(m).Elem()
 
 	var (
@@ -619,12 +619,12 @@ func Delete(db *sql.DB, m Model) error {
 	}
 
 	if len(pkFields) == 0 {
-		return errors.New("delete failed: model does not have primary key")
+		return nil, errors.New("delete failed: model does not have primary key")
 	}
 
 	for _, pkField := range pkFields {
 		if reflect.Zero(pkField.field.Type()).Interface() == pkField.field.Interface() {
-			return errors.New("delete failed: model's primary key has zero value")
+			return nil, errors.New("delete failed: model's primary key has zero value")
 		}
 
 		where = append(where, fmt.Sprintf("%s = ?", pkField.name))
@@ -637,18 +637,9 @@ func Delete(db *sql.DB, m Model) error {
 	query := fmt.Sprintf("delete from %s where %s", m.Table(), strings.Join(where, " and "))
 	res, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
-		return &Error{err, query, args}
+		return nil, &Error{err, query, args}
 	}
-
-	ra, err := res.RowsAffected()
-	if err != nil {
-		return errors.Wrap(err, "delete failed")
-	}
-	if ra == 0 {
-		return &Error{ErrNoRowsAffected, query, args}
-	}
-
-	return nil
+	return res, err
 }
 
 // Upsert does the same think as UpsertContext with default background context
