@@ -216,7 +216,11 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 						}
 						opts.Divider = OR
 					} else {
-						keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", len(v.([]interface{}))), ",")))
+						count := len(v.([]interface{}))
+						if opts.Limit != 0 {
+							count = opts.Limit
+						}
+						keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", count), ",")))
 					}
 					values = append(values, v.([]interface{})...)
 				} else {
