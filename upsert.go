@@ -56,19 +56,38 @@ func buildJoinQuery(info *modelInfo, field modelField) (string, []interface{}, e
 
 func buildUpsertQuery(info *modelInfo) (string, []interface{}) {
 	var (
-		query        = "insert into %s(%s) values(%s) on conflict(%s) do update set %s"
+		query        = "insert into %s(%s) values(%s) %s"
+		conflictTmpl = "on conflict(%s) do update set %s"
+		conflictStmt string
 		updateFields []string
-		args         []interface{}
 	)
 	columns, indexes, args := getModelColumns(info.fields)
 	for _, f := range columns {
 		updateFields = append(updateFields, fmt.Sprintf("%s = ?", f))
 	}
-	args = append(args, args...)
+
+	if len(indexes) != 0 {
+		conflictStmt = fmt.Sprintf(
+			conflictTmpl, strings.Join(indexes, ","), strings.Join(updateFields, ","))
+		// wee need to double args since we use them twice
+		args = append(args, args...)
+	}
+
 	return fmt.Sprintf(
 		query, info.table, strings.Join(columns, ","),
-		strings.Trim(strings.Repeat("?,", len(columns)), ","),
-		strings.Join(indexes, ","), strings.Join(updateFields, ",")), args
+		strings.Trim(strings.Repeat("?,", len(columns)), ","), conflictStmt), args
+}
+
+func buildSearchQuery(info *modelInfo) (string, []interface{}) {
+	var (
+		query       = "select id from %s where %s"
+		whereFields []string
+	)
+	columns, _, args := getModelColumns(info.fields)
+	for _, f := range columns {
+		whereFields = append(whereFields, fmt.Sprintf("%s = ?", f))
+	}
+	return fmt.Sprintf(query, info.table, strings.Join(whereFields, ",")), args
 }
 
 func buildInsertRelationQuery(field modelField, info *modelInfo, values []interface{}, columns []string) (string, []interface{}) {
@@ -267,7 +286,26 @@ func upsert(ctx context.Context, db *sql.DB, m IModel) error {
 			return &Error{err, q, a}
 		}
 
-		if err := setModelPk(mInfo, result); err != nil {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+
+		if id == 0 {
+			// model was upserted, so we need to know it's id
+			q, a := buildSearchQuery(mInfo)
+			rows, err := db.QueryContext(ctx, q, a...)
+			if err != nil {
+				return &Error{err, q, a}
+			}
+			for rows.Next() {
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+			}
+		}
+
+		if err := setModelPk(mInfo, id); err != nil {
 			return err
 		}
 	}

@@ -26,6 +26,7 @@ func (s *baseModelFixture) Query() string {
 		create table base_model(id integer primary key, field text)
 	`
 }
+
 func (s *baseModelFixture) SetupSuite() {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(s.T(), err)
@@ -111,9 +112,11 @@ func (*autoCreateRelatedModel) Table() string { return "main_model" }
 
 func (s *autoCreateRelatedFixture) Test() {
 	m := autoCreateRelatedModel{
-		Name:              "test",
-		RelatedHasOne:     &baseModel{Field: "base model field"},
-		RelatedHasMany:    []*autoCreateRelatedHasManyModel{{Related: &autoCreateRelatedModel{ID: 1}}, {Related: &autoCreateRelatedModel{ID: 1}}},
+		Name:          "test",
+		RelatedHasOne: &baseModel{Field: "base model field"},
+		RelatedHasMany: []*autoCreateRelatedHasManyModel{
+			{Related: &autoCreateRelatedModel{ID: 1}},
+			{Related: &autoCreateRelatedModel{ID: 1}}},
 		RelatedManyToMany: []*autoCreateRelatedManyToManyModel{{Field: "test 1"}, {Field: "test 2"}},
 	}
 	err := upsert(context.Background(), s.db, &m)
@@ -137,4 +140,50 @@ func (s *autoCreateRelatedFixture) Test() {
 
 func TestAutoCreate(t *testing.T) {
 	suite.Run(t, new(autoCreateRelatedFixture))
+}
+
+type uniqueFieldFixture struct {
+	suite.Suite
+	db *sql.DB
+}
+
+type modelWithUniqueField struct {
+	ID    int64  `ormlite:"primary"`
+	Field string `ormlite:"unique"`
+}
+
+func (*modelWithUniqueField) Table() string { return "test_unique" }
+
+func (s *uniqueFieldFixture) Query() string {
+	return `
+		create table test_unique(id integer primary key, field text unique);
+		insert into test_unique(field) values ('test 1'), ('test 2'), ('test 3');
+	`
+}
+
+func (s *uniqueFieldFixture) SetupSuite() {
+	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	require.NoError(s.T(), err)
+	_, err = db.Exec(s.Query())
+	require.NoError(s.T(), err)
+	_, err = db.Query("select count(*) from test_unique")
+	require.NoError(s.T(), err)
+	s.db = db
+}
+
+func (s *uniqueFieldFixture) TestUpsert() {
+	m := modelWithUniqueField{Field: "test 3"}
+	if assert.NoError(s.T(), Upsert(s.db, &m)) {
+		assert.EqualValues(
+			s.T(), 3, m.ID, "ID should be equal to the row that caused unique violation")
+	}
+	m2 := modelWithUniqueField{Field: "test 2"}
+	if assert.NoError(s.T(), Upsert(s.db, &m2)) {
+		assert.EqualValues(
+			s.T(), 2, m2.ID, "ID should be equal to the row that caused unique violation")
+	}
+}
+
+func TestUniqueField(t *testing.T) {
+	suite.Run(t, new(uniqueFieldFixture))
 }

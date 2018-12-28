@@ -1,7 +1,6 @@
 package ormlite
 
 import (
-	"database/sql"
 	"github.com/iancoleman/strcase"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
@@ -20,7 +19,12 @@ const (
 	referenceField
 	omittedField
 	pkField
+	uniqueField
 )
+
+func isUniqueField(field modelField) bool {
+	return field.Type&uniqueField == uniqueField
+}
 
 func isPkField(field modelField) bool {
 	return field.Type&pkField == pkField
@@ -61,6 +65,7 @@ type fieldReference struct {
 type modelField struct {
 	Type      fieldType
 	column    string
+	unique    bool
 	reference fieldReference
 	value     reflect.Value
 }
@@ -142,6 +147,9 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 		mField.reference.column = lookForSetting(tag, "ref")
 		mField.Type += pkField
 	}
+	if lookForSetting(tag, "unique") != "" {
+		mField.Type += uniqueField
+	}
 	return mField, nil
 }
 
@@ -170,18 +178,11 @@ func getModelInfo(o interface{}) (*modelInfo, error) {
 	return &mi, nil
 }
 
-func setModelPk(info *modelInfo, result sql.Result) error {
+func setModelPk(info *modelInfo, id int64) error {
 	// check if there were last inserted id and apply it to primary key
 	for _, field := range info.fields {
 		if isPkField(field) && !isReferenceField(field) {
 			if isZeroField(field.value) {
-				id, err := result.LastInsertId()
-				if err != nil {
-					return err
-				}
-				if field.value.Type().Kind() != reflect.Int64 {
-					return errors.New("primary key is not int64")
-				}
 				field.value.SetInt(id)
 			}
 		}
@@ -264,10 +265,13 @@ func getModelColumns(fields []modelField) ([]string, []string, []interface{}) {
 			continue
 		}
 		if isPkField(field) {
-			indexes = append(indexes, field.column)
 			if isZeroField(field.value) {
 				continue
 			}
+			indexes = append(indexes, field.column)
+		}
+		if isUniqueField(field) {
+			indexes = append(indexes, field.column)
 		}
 		columns = append(columns, field.column)
 		if isHasOne(field) {
