@@ -14,7 +14,7 @@ import (
 type relationType int
 
 const (
-	queryTimeout = time.Second * 5
+	queryTimeout = time.Second * 30
 
 	packageTagName       = "ormlite"
 	defaultRelationDepth = 1
