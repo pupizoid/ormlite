@@ -217,7 +217,7 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 						opts.Divider = OR
 					} else {
 						count := len(v.([]interface{}))
-						if opts.Limit != 0 {
+						if opts.Limit != 0 && opts.Limit < count {
 							count = opts.Limit
 						}
 						keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", count), ",")))
@@ -346,8 +346,8 @@ func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue reflect.Val
 	if relField == nil {
 		return errors.New("failed to load has many relation since none fields of related type meet parent type")
 	}
-	return QuerySliceContext(ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1}, Where{getFieldColumnName(
-		*relField): pkFields[0].field.Interface()}), fieldValue.Addr().Interface())
+	return QuerySliceContext(ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1, Limit: options.Limit},
+		Where{getFieldColumnName(*relField): pkFields[0].field.Interface()}), fieldValue.Addr().Interface())
 }
 
 func loadHasOneRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
@@ -453,7 +453,9 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 		return nil // query has no rows so there is no need to load any model
 	}
 	return QuerySliceContext(
-		ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1, Divider: options.Divider}, relatedQueryConditions),
+		ctx, db, WithWhere(&Options{
+			RelationDepth: options.RelationDepth - 1, Divider: options.Divider, Limit: options.Limit},
+			relatedQueryConditions),
 		rv.Addr().Interface(),
 	)
 }

@@ -528,7 +528,7 @@ func (s *manyToManyRelationFixture) TestQueryStruct() {
 func (s *manyToManyRelationFixture) TestQuerySlice() {
 	// test regular mtm relation
 	var mm []*modelManyToMany
-	require.NoError(s.T(), QuerySliceContext(context.Background(), s.db, DefaultOptions(), &mm))
+	require.NoError(s.T(), QuerySliceContext(context.Background(), s.db, WithLimit(DefaultOptions(), 100), &mm))
 	for _, m := range mm {
 		assert.NotEmpty(s.T(), m.Related)
 		assert.Equal(s.T(), 2, len(m.Related))
@@ -551,6 +551,16 @@ func (s *manyToManyRelationFixture) TestQuerySlice() {
 			assert.Equal(s.T(), &modelManyToManyWithCustomPK{
 				ID: 1, Name: "name",
 				Related: []*relatingModelWithCustomPK{{1, "common test 1"}, {2, "common test 2"}},
+			}, m)
+		}
+	}
+	// test query with limit
+	var mmccc []*modelManyToManyWithCustomPK
+	if assert.NoError(s.T(), QuerySliceContext(context.Background(), s.db, WithLimit(DefaultOptions(), 1), &mmccc)) {
+		for _, m := range mmccc {
+			assert.Equal(s.T(), &modelManyToManyWithCustomPK{
+				ID: 1, Name: "name",
+				Related: []*relatingModelWithCustomPK{{1, "common test 1"}},
 			}, m)
 		}
 	}
