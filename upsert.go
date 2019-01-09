@@ -291,7 +291,7 @@ func upsert(ctx context.Context, db *sql.DB, m IModel) error {
 			return err
 		}
 
-		if id == 0 {
+		if id == 0 && pkIsNull(mInfo) {
 			// model was upserted, so we need to know it's id
 			q, a := buildSearchQuery(mInfo)
 			rows, err := db.QueryContext(ctx, q, a...)
