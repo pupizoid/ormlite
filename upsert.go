@@ -255,6 +255,7 @@ func syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, mode
 	if field.value.Type().Kind() != reflect.Slice {
 		return errors.New("has many relation value should be slice containing models")
 	}
+items:
 	for i := 0; i < field.value.Len(); i++ {
 		ri, err := getModelInfo(field.value.Index(i))
 		if err != nil {
@@ -264,7 +265,13 @@ func syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, mode
 			if model.value.Type().AssignableTo(f.value.Type()) {
 				f.value.Set(model.value)
 			}
+			// we shouldn't upsert existing related models due to the case
+			// when we load complex structures with not enough relation depth
+			if isPkField(f) && !isZeroField(f.value) {
+				break items
+			}
 		}
+
 		if err := upsert(ctx, db, ri.value.Addr().Interface().(IModel)); err != nil {
 			return err
 		}
