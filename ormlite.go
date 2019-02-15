@@ -387,6 +387,7 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 		args                       []interface{}
 		relatedQueryConditions     = make(Where)
 	)
+
 	if rv.Kind() != reflect.Slice {
 		return fmt.Errorf("can't load relations: wrong field type: %v", rv.Type())
 	}
@@ -413,15 +414,14 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 		return errors.New("can't load relations: related struct does not have primary key")
 	}
 
-	if ri.FieldName != "" {
-		for _, pkField := range pkFields {
-			where = append(where, fmt.Sprintf("%s = ?", pkField.relationName))
-			args = append(args, pkField.field.Interface())
-		}
-		if ri.Condition != "" {
-			where = append(where, ri.Condition)
-		}
+	for _, pkField := range pkFields {
+		where = append(where, fmt.Sprintf("%s = ?", pkField.relationName))
+		args = append(args, pkField.field.Interface())
 	}
+	if ri.Condition != "" {
+		where = append(where, ri.Condition)
+	}
+
 	var whereClause string
 	if len(pkFields) != 0 {
 		whereClause = " where " + strings.Join(where, AND)

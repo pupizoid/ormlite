@@ -147,9 +147,11 @@ func buildDeleteRelationQuery(field modelField, info *modelInfo, keys interface{
 }
 
 func (u *upserter) syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
-	if u.depth > 1 {
+	if u.depth > 0 {
 		return nil // don't update relations deeper than 1
 	}
+
+	u.depth++
 
 	for _, field := range info.fields {
 		if isManyToMany(field) {
@@ -166,8 +168,6 @@ func (u *upserter) syncRelations(ctx context.Context, db *sql.DB, info *modelInf
 			}
 		}
 	}
-
-	u.depth++
 	return nil
 }
 

@@ -71,7 +71,7 @@ type autoCreateRelatedFixture struct {
 func (s *autoCreateRelatedFixture) Query() string {
 	return `
 		create table base_model(id integer primary key, field text);
-		create table main_model(id integer primary key, name text, related_has_one int);
+		create table main_model(id integer primary key, name text, related_ho int);
 		create table has_many_model(id integer primary key, related_id integer);
 		create table many_to_many_model(id integer primary key, field text);
 		create table mapping_table(m_id int, m2_id int);
@@ -87,7 +87,7 @@ func (s *autoCreateRelatedFixture) SetupSuite() {
 }
 
 type autoCreateRelatedHasManyModel struct {
-	ID      int64                   `ormlite:"primary,ref=has_many_id"`
+	ID      int64                   `ormlite:"primary,ref=hm_id"`
 	Related *autoCreateRelatedModel `ormlite:"has_one,col=related_id"`
 }
 
@@ -103,7 +103,7 @@ func (*autoCreateRelatedManyToManyModel) Table() string { return "many_to_many_m
 type autoCreateRelatedModel struct {
 	ID                int64 `ormlite:"primary,ref=m_id"`
 	Name              string
-	RelatedHasOne     *baseModel                          `ormlite:"has_one,col=related_has_one"`
+	RelatedHasOne     *baseModel                          `ormlite:"has_one,col=related_ho"`
 	RelatedHasMany    []*autoCreateRelatedHasManyModel    `ormlite:"has_many"`
 	RelatedManyToMany []*autoCreateRelatedManyToManyModel `ormlite:"many_to_many,table=mapping_table"`
 }
@@ -130,6 +130,13 @@ func (s *autoCreateRelatedFixture) Test() {
 		for i, rhm := range m.RelatedHasMany {
 			assert.EqualValues(s.T(), i+1, rhm.ID)
 		}
+	}
+	var mm autoCreateRelatedModel
+	if assert.NoError(s.T(), QueryStruct(s.db, &Options{
+		RelationDepth: 4,
+	}, &mm)) {
+		assert.EqualValues(s.T(), 1, mm.ID)
+		assert.EqualValues(s.T(), "test", mm.Name)
 	}
 }
 
@@ -189,8 +196,9 @@ type skipUpdatingExistingRelatedModels struct {
 }
 
 type skipHasOneModel struct {
-	ID      int64             `ormlite:"primary,col=rowid"`
-	Related *skipHasManyModel `ormlite:"has_one,col=related_id"`
+	ID              int64                `ormlite:"primary,col=rowid"`
+	HasManyModel    *skipHasManyModel    `ormlite:"has_one,col=related_hm_id"`
+	ManyToManyModel *skipManyToManyModel `ormlite:"has_one,col=related_mm_id"`
 }
 
 func (*skipHasOneModel) Table() string { return "has_one_model" }
@@ -203,21 +211,32 @@ type skipHasManyModel struct {
 func (*skipHasManyModel) Table() string { return "has_many_model" }
 
 type skipRelatingModel struct {
-	ID      int64             `ormlite:"primary,col=rowid"`
+	ID      int64             `ormlite:"primary,ref=m2_id"`
 	Related *skipHasManyModel `ormlite:"has_one,col=related_id"`
 }
 
 func (*skipRelatingModel) Table() string { return "relating_model" }
 
+type skipManyToManyModel struct {
+	ID      int64                `ormlite:"primary,ref=m_id"`
+	Related []*skipRelatingModel `ormlite:"many_to_many,table=mapping_table"`
+}
+
+func (*skipManyToManyModel) Table() string { return "mtm_model" }
+
 func (s *skipUpdatingExistingRelatedModels) Query() string {
 	return `
-		create table relating_model (related_id int);
+		create table relating_model (id integer primary key, related_id int);
 		create table has_many_model (name text);
-		create table has_one_model (related_id int);
+		create table has_one_model (related_hm_id int, related_mm_id int);
+		create table mtm_model (id integer primary key);
+		create table mapping_table(m_id int, m2_id int);
 
 		insert into has_many_model (name) values ('test');
+		insert into mtm_model (id) values (1);
 		insert into relating_model (related_id) values (1), (1), (1);
-		insert into has_one_model (related_id) values (1);
+		insert into has_one_model (related_hm_id, related_mm_id) values (1, 1);
+		insert into mapping_table (m_id, m2_id) values (1,1), (1,2), (1,3);
 	`
 }
 
@@ -232,18 +251,22 @@ func (s *skipUpdatingExistingRelatedModels) SetupSuite() {
 func (s *skipUpdatingExistingRelatedModels) Test() {
 	var m = skipHasOneModel{1, &skipHasManyModel{
 		ID: 1, Related: []*skipRelatingModel{
-			{1, nil}, {2, nil}, {3, nil},
-		}},
+			nil,
+		}}, &skipManyToManyModel{1, nil},
 	}
 
 	if assert.NoError(s.T(), Upsert(s.db, &m)) {
-		// query relating model
-		var rms []*skipRelatingModel
-		if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelationDepth: 2}, &rms)) {
-			assert.Equal(s.T(), 3, len(rms))
-			for _, rm := range rms {
-				assert.NotNil(s.T(), rm.Related)
+		var rm []*skipRelatingModel
+		if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &rm)) {
+			for _, rmm := range rm {
+				assert.NotNil(s.T(), rmm.Related)
 			}
+		}
+
+		var mm skipManyToManyModel
+		if assert.NoError(s.T(), QueryStruct(s.db, &Options{RelationDepth: 4}, &mm)) {
+			assert.NotNil(s.T(), mm.Related)
+			assert.EqualValues(s.T(), 3, len(mm.Related))
 		}
 	}
 }
