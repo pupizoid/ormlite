@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+type upserter struct {
+	depth int
+}
+
 func sliceAsArray(s []interface{}) interface{} {
 	arr := reflect.New(reflect.ArrayOf(len(s), reflect.TypeOf(s).Elem())).Elem()
 	for i, j := range s {
@@ -142,22 +146,28 @@ func buildDeleteRelationQuery(field modelField, info *modelInfo, keys interface{
 	return fmt.Sprintf(query, field.reference.table, strings.Join(where, AND)), args
 }
 
-func syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
+func (u *upserter) syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
+	if u.depth > 1 {
+		return nil // don't update relations deeper than 1
+	}
+
 	for _, field := range info.fields {
 		if isManyToMany(field) {
-			if err := syncManyToManyRelation(ctx, db, field, info); err != nil {
+			if err := u.syncManyToManyRelation(ctx, db, field, info); err != nil {
 				return err
 			}
 		} else if isHasOne(field) {
-			if err := syncHasOneRelation(ctx, db, field); err != nil {
+			if err := u.syncHasOneRelation(ctx, db, field); err != nil {
 				return err
 			}
 		} else if isHasMany(field) {
-			if err := syncHasManyRelation(ctx, db, field, info); err != nil {
+			if err := u.syncHasManyRelation(ctx, db, field, info); err != nil {
 				return err
 			}
 		}
 	}
+
+	u.depth++
 	return nil
 }
 
@@ -200,7 +210,7 @@ func getStoredRelations(ctx context.Context, db *sql.DB, field modelField, info 
 	return cols, result, nil
 }
 
-func syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, info *modelInfo) error {
+func (u *upserter) syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, info *modelInfo) error {
 	refValues, err := getRelationMapping(field.value)
 	if err != nil {
 		return err
@@ -241,14 +251,14 @@ func syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, i
 	return nil
 }
 
-func syncHasOneRelation(ctx context.Context, db *sql.DB, field modelField) error {
+func (u *upserter) syncHasOneRelation(ctx context.Context, db *sql.DB, field modelField) error {
 	if !field.value.IsValid() || field.value.IsNil() {
 		return nil
 	}
-	return upsert(ctx, db, field.value.Interface().(IModel))
+	return u.upsert(ctx, db, field.value.Interface().(IModel))
 }
 
-func syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, model *modelInfo) error {
+func (u *upserter) syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, model *modelInfo) error {
 	if !field.value.IsValid() || field.value.IsNil() {
 		return nil
 	}
@@ -272,7 +282,7 @@ items:
 			}
 		}
 
-		if err := upsert(ctx, db, ri.value.Addr().Interface().(IModel)); err != nil {
+		if err := u.upsert(ctx, db, ri.value.Addr().Interface().(IModel)); err != nil {
 			return err
 		}
 	}
@@ -280,6 +290,10 @@ items:
 }
 
 func upsert(ctx context.Context, db *sql.DB, m IModel) error {
+	return new(upserter).upsert(ctx, db, m)
+}
+
+func (u *upserter) upsert(ctx context.Context, db *sql.DB, m IModel) error {
 	mInfo, err := getModelInfo(m)
 	if err != nil {
 		return err
@@ -317,5 +331,5 @@ func upsert(ctx context.Context, db *sql.DB, m IModel) error {
 		}
 	}
 
-	return syncRelations(ctx, db, mInfo)
+	return u.syncRelations(ctx, db, mInfo)
 }
