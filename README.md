@@ -40,7 +40,7 @@ Let's describe some tags used in example struct:
 This is very similar to QueryStruct except that it loads multiple rows in a slice.
 
 ### Upsert
-This function is used to save or update existing model, if model has `primary` field and it's value is zero - this model will be inserted to the model's table. Otherwise model's row will be updated according it's current values. This function also supports updating related models except creating or editing `many-to-many` related models.
+This function is used to save or update existing model, if model has `primary` field and it's value is zero - this model will be inserted to the model's table. Otherwise model's row will be updated according it's current values (except `has-one` relation). This function also supports updating related models except creating or editing `many-to-many` related models.
 ```go
 err := Upsert(db, &s)
 ```

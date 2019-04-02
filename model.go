@@ -286,7 +286,6 @@ func getModelColumns(fields []modelField) ([]string, []string, []interface{}) {
 func pkIsNull(info *modelInfo) bool {
 	for _, field := range info.fields {
 		if isPkField(field) {
-
 			if reflect.Zero(field.value.Type()).Interface() == field.value.Interface() {
 				return true
 			}

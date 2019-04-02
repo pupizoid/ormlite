@@ -86,7 +86,7 @@ func (s *simpleModelFixture) SetupSuite() {
 }
 
 func (s *simpleModelFixture) TearDownSuite() {
-	s.db.Close()
+	require.NoError(s.T(), s.db.Close())
 }
 
 func (s *simpleModelFixture) TestCRUD() {
@@ -300,7 +300,7 @@ func (s *hasOneRelationFixture) SetupSuite() {
 }
 
 func (s *hasOneRelationFixture) TearDownSuite() {
-	s.db.Close()
+	require.NoError(s.T(), s.db.Close())
 }
 
 func (s *hasOneRelationFixture) TestQueryStruct() {
@@ -322,7 +322,7 @@ func (s *hasOneRelationFixture) TestUpsertAndDelete() {
 		assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": m.ID}), m))
 	}
 	assert.Equal(s.T(), int64(2), mm[2].Related.ID)
-	assert.Equal(s.T(), "lol", mm[2].Related.Field)
+	assert.Equal(s.T(), "test 2", mm[2].Related.Field)
 	//
 	_, err := Delete(s.db, mm[0])
 	assert.NoError(s.T(), err)
@@ -386,7 +386,7 @@ func (s *hasManyModelFixture) SetupSuite() {
 }
 
 func (s *hasManyModelFixture) TearDownSuite() {
-	s.db.Close()
+	require.NoError(s.T(), s.db.Close())
 }
 
 func (s *hasManyModelFixture) TestQueryStruct() {
@@ -494,7 +494,7 @@ func (s *manyToManyRelationFixture) SetupSuite() {
 }
 
 func (s *manyToManyRelationFixture) TearDownSuite() {
-	s.db.Close()
+	require.NoError(s.T(), s.db.Close())
 }
 
 func (s *manyToManyRelationFixture) TestQueryStruct() {
@@ -679,7 +679,7 @@ func (s *modelMultiTableFixture) SetupSuite() {
 }
 
 func (s *modelMultiTableFixture) TearDownSuite() {
-	s.db.Close()
+	require.NoError(s.T(), s.db.Close())
 }
 
 func (s *modelMultiTableFixture) TestQuery() {

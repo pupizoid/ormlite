@@ -255,6 +255,14 @@ func (u *upserter) syncHasOneRelation(ctx context.Context, db *sql.DB, field mod
 	if !field.value.IsValid() || field.value.IsNil() {
 		return nil
 	}
+	info, err := getModelInfo(field.value)
+	if err != nil {
+		return errors.Wrap(err, "can't sync has one relation")
+	}
+	// don't upsert related model if it already exists
+	if !pkIsNull(info) {
+		return nil
+	}
 	return u.upsert(ctx, db, field.value.Interface().(IModel))
 }
 

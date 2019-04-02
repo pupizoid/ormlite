@@ -71,7 +71,7 @@ type autoCreateRelatedFixture struct {
 func (s *autoCreateRelatedFixture) Query() string {
 	return `
 		create table base_model(id integer primary key, field text);
-		create table main_model(id integer primary key, name text, related_ho int);
+		create table main_model(id integer primary key, name text, related_to int);
 		create table has_many_model(id integer primary key, related_id integer);
 		create table many_to_many_model(id integer primary key, field text);
 		create table mapping_table(m_id int, m2_id int);
@@ -103,7 +103,7 @@ func (*autoCreateRelatedManyToManyModel) Table() string { return "many_to_many_m
 type autoCreateRelatedModel struct {
 	ID                int64 `ormlite:"primary,ref=m_id"`
 	Name              string
-	RelatedHasOne     *baseModel                          `ormlite:"has_one,col=related_ho"`
+	RelatedHasOne     *baseModel                          `ormlite:"has_one,col=related_to"`
 	RelatedHasMany    []*autoCreateRelatedHasManyModel    `ormlite:"has_many"`
 	RelatedManyToMany []*autoCreateRelatedManyToManyModel `ormlite:"many_to_many,table=mapping_table"`
 }
