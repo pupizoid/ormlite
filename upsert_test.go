@@ -38,7 +38,7 @@ func (s *baseModelFixture) SetupSuite() {
 
 func (s *baseModelFixture) TestInsert() {
 	var m = baseModel{Field: "test"}
-	if assert.NoError(s.T(), insert(context.Background(), s.db, &m, true)) {
+	if assert.NoError(s.T(), Insert(s.db, &m)) {
 		assert.EqualValues(s.T(), 1, m.ID)
 	}
 
