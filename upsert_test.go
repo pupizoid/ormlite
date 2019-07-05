@@ -6,12 +6,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"io/ioutil"
+	"os"
 	"testing"
 )
 
 type baseModelFixture struct {
 	suite.Suite
 	db *sql.DB
+	f  *os.File
 }
 
 type baseModel struct {
@@ -28,14 +31,20 @@ func (s *baseModelFixture) Query() string {
 }
 
 func (s *baseModelFixture) SetupSuite() {
-	db, err := sql.Open("sqlite3", ":memory:")
+	s.f, _ = ioutil.TempFile("", "")
+
+	db, err := sql.Open("sqlite3", s.f.Name())
 	require.NoError(s.T(), err)
 	_, err = db.Exec(s.Query())
 	require.NoError(s.T(), err)
 	s.db = db
 }
 
-func (s *baseModelFixture) TestInsert() {
+func (s *baseModelFixture) TearDownSuite() {
+
+}
+
+func (s *baseModelFixture) TestAInsert() {
 	var m = baseModel{Field: "test"}
 	if assert.NoError(s.T(), Insert(s.db, &m)) {
 		assert.EqualValues(s.T(), 1, m.ID)
@@ -64,7 +73,7 @@ func (s *baseModelFixture) TestUpsert() {
 }
 
 func (s *baseModelFixture) TestUpdate() {
-	var m = baseModel{ID: 1, Field: "test update"}
+	var m = baseModel{ID: 1, Field: "test updateConflict"}
 	err := Update(s.db, &m)
 	if assert.NoError(s.T(), err) {
 		rows, err := s.db.Query("select field from base_model where id = ?", m.ID)
@@ -77,7 +86,7 @@ func (s *baseModelFixture) TestUpdate() {
 		}
 	}
 
-	m = baseModel{ID: 10, Field: "test update"}
+	m = baseModel{ID: 10, Field: "test updateConflict"}
 	err = Update(s.db, &m)
 	if assert.Error(s.T(), err) {
 		assert.True(s.T(), IsNotFound(err))

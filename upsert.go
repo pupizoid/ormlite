@@ -11,8 +11,8 @@ import (
 )
 
 type inserter struct {
-	depth  int
-	update bool
+	depth          int
+	updateConflict bool
 }
 
 func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
@@ -86,13 +86,21 @@ func buildUpdateQuery(info *modelInfo) (string, []interface{}) {
 	)
 
 	for _, f := range info.fields {
+		if isOmittedField(f) ||
+			isReferenceField(f) && !isHasOne(f) {
+			continue
+		}
 		if isPkField(f) {
 			where = append(where, fmt.Sprintf("%s = ?", f.column))
 			ids = append(ids, f.value.Interface())
 			continue
 		}
 		columns = append(columns, fmt.Sprintf("%s = ?", f.column))
-		args = append(args, f.value.Interface())
+		if isHasOne(f) {
+			args = append(args, getRefModelPk(f))
+		} else {
+			args = append(args, f.value.Interface())
+		}
 	}
 
 	args = append(args, ids...)
@@ -113,7 +121,7 @@ func (ins *inserter) buildUpsertQuery(info *modelInfo) (string, []interface{}) {
 		updateFields = append(updateFields, fmt.Sprintf("%s = ?", f))
 	}
 
-	if ins.update {
+	if ins.updateConflict {
 		if len(indexes) != 0 {
 			conflictStmt = fmt.Sprintf(
 				conflictTmpl, strings.Join(indexes, ","), strings.Join(updateFields, ","))
@@ -343,7 +351,7 @@ items:
 }
 
 func insert(ctx context.Context, db *sql.DB, m IModel, update bool) error {
-	i := &inserter{update: update}
+	i := &inserter{updateConflict: update}
 	return i.insert(ctx, db, m)
 }
 
@@ -388,7 +396,7 @@ func (ins *inserter) insert(ctx context.Context, db *sql.DB, m IModel) error {
 	return ins.syncRelations(ctx, db, mInfo)
 }
 
-func update(ctx context.Context, db *sql.DB, m Model) error {
+func (ins *inserter) update(ctx context.Context, db *sql.DB, m Model) error {
 	mInfo, err := getModelInfo(m)
 	if err != nil {
 		return err
@@ -407,12 +415,13 @@ func update(ctx context.Context, db *sql.DB, m Model) error {
 	if affected == 0 {
 		return ErrNoRowsAffected
 	}
-	return nil
+
+	return ins.syncRelations(ctx, db, mInfo)
 }
 
 // UpdateContext updates model by it's primary keys
 func UpdateContext(ctx context.Context, db *sql.DB, m Model) error {
-	return update(ctx, db, m)
+	return new(inserter).update(ctx, db, m)
 }
 
 // Update updates model by it's primary keys with background context
