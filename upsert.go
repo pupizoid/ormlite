@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/mattn/go-sqlite3"
 	"github.com/pkg/errors"
 	"reflect"
 	"strings"
@@ -75,6 +76,29 @@ func buildJoinQuery(info *modelInfo, field modelField) (string, []interface{}, e
 	}
 	return fmt.Sprintf(
 		query, strings.Join(columns, ","), field.reference.table, whereString), args, nil
+}
+
+func buildUpdateQuery(info *modelInfo) (string, []interface{}) {
+	var (
+		query          = "update %s set %s where %s"
+		where, columns []string
+		args, ids      []interface{}
+	)
+
+	for _, f := range info.fields {
+		if isPkField(f) {
+			where = append(where, fmt.Sprintf("%s = ?", f.column))
+			ids = append(ids, f.value.Interface())
+			continue
+		}
+		columns = append(columns, fmt.Sprintf("%s = ?", f.column))
+		args = append(args, f.value.Interface())
+	}
+
+	args = append(args, ids...)
+
+	return fmt.Sprintf(
+		query, info.table, strings.Join(columns, ","), strings.Join(where, AND)), args
 }
 
 func (ins *inserter) buildUpsertQuery(info *modelInfo) (string, []interface{}) {
@@ -362,4 +386,49 @@ func (ins *inserter) insert(ctx context.Context, db *sql.DB, m IModel) error {
 	}
 
 	return ins.syncRelations(ctx, db, mInfo)
+}
+
+func update(ctx context.Context, db *sql.DB, m Model) error {
+	mInfo, err := getModelInfo(m)
+	if err != nil {
+		return err
+	}
+
+	q, a := buildUpdateQuery(mInfo)
+	res, err := db.ExecContext(ctx, q, a...)
+	if err != nil {
+		return &Error{err, q, a}
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNoRowsAffected
+	}
+	return nil
+}
+
+// UpdateContext updates model by it's primary keys
+func UpdateContext(ctx context.Context, db *sql.DB, m Model) error {
+	return update(ctx, db, m)
+}
+
+// Update updates model by it's primary keys with background context
+func Update(db *sql.DB, m Model) error {
+	return UpdateContext(context.Background(), db, m)
+}
+
+func IsUniqueViolation(err error) bool {
+	if e, ok := err.(*Error); ok {
+		if inner, ok := e.SQLError.(sqlite3.Error); ok {
+			return inner.Code == sqlite3.ErrConstraint && inner.ExtendedCode == sqlite3.ErrConstraintUnique
+		}
+	}
+	return false
+}
+
+func IsNotFound(err error) bool {
+	return err == ErrNoRowsAffected
 }

@@ -25,8 +25,10 @@ const (
 	manyToMany
 )
 
-// ErrNoRowsAffected is an error to return when no rows were affected
-var ErrNoRowsAffected = errors.New("no rows affected")
+var (
+	// ErrNoRowsAffected is an error to return when no rows were affected
+	ErrNoRowsAffected = errors.New("no rows affected")
+)
 
 // Error is a custom struct that contains sql error, query and arguments
 type Error struct {

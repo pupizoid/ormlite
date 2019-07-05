@@ -3,7 +3,6 @@ package ormlite
 import (
 	"context"
 	"database/sql"
-	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -45,14 +44,11 @@ func (s *baseModelFixture) TestInsert() {
 	var m1 = baseModel{Field: "test"}
 	err := insert(context.Background(), s.db, &m1, false)
 	if assert.Error(s.T(), err) {
-		if e, ok := err.(*sqlite3.Error); ok {
-			assert.EqualValues(s.T(), sqlite3.ErrConstraint, e.Code)
-			assert.EqualValues(s.T(), sqlite3.ErrConstraintUnique, e.ExtendedCode)
-		}
+		assert.True(s.T(), IsUniqueViolation(err))
 	}
 }
 
-func (s *baseModelFixture) TestUpdate() {
+func (s *baseModelFixture) TestUpsert() {
 	var m = baseModel{ID: 1, Field: "test 2"}
 	if assert.NoError(s.T(), insert(context.Background(), s.db, &m, true)) {
 		// check db really changed
@@ -64,6 +60,28 @@ func (s *baseModelFixture) TestUpdate() {
 				assert.EqualValues(s.T(), m.Field, field)
 			}
 		}
+	}
+}
+
+func (s *baseModelFixture) TestUpdate() {
+	var m = baseModel{ID: 1, Field: "test update"}
+	err := Update(s.db, &m)
+	if assert.NoError(s.T(), err) {
+		rows, err := s.db.Query("select field from base_model where id = ?", m.ID)
+		if assert.NoError(s.T(), err) {
+			for rows.Next() {
+				var field string
+				assert.NoError(s.T(), rows.Scan(&field))
+				assert.EqualValues(s.T(), m.Field, field)
+			}
+		}
+	}
+
+	m = baseModel{ID: 10, Field: "test update"}
+	err = Update(s.db, &m)
+	if assert.Error(s.T(), err) {
+		assert.True(s.T(), IsNotFound(err))
+		assert.False(s.T(), IsUniqueViolation(err))
 	}
 }
 
