@@ -3,6 +3,7 @@ package ormlite
 import (
 	"context"
 	"database/sql"
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -23,7 +24,7 @@ func (*baseModel) Table() string { return "base_model" }
 
 func (s *baseModelFixture) Query() string {
 	return `
-		create table base_model(id integer primary key, field text)
+		create table base_model(id integer primary key, field text unique)
 	`
 }
 
@@ -37,14 +38,23 @@ func (s *baseModelFixture) SetupSuite() {
 
 func (s *baseModelFixture) TestInsert() {
 	var m = baseModel{Field: "test"}
-	if assert.NoError(s.T(), upsert(context.Background(), s.db, &m)) {
+	if assert.NoError(s.T(), insert(context.Background(), s.db, &m, true)) {
 		assert.EqualValues(s.T(), 1, m.ID)
+	}
+
+	var m1 = baseModel{Field: "test"}
+	err := insert(context.Background(), s.db, &m1, false)
+	if assert.Error(s.T(), err) {
+		if e, ok := err.(*sqlite3.Error); ok {
+			assert.EqualValues(s.T(), sqlite3.ErrConstraint, e.Code)
+			assert.EqualValues(s.T(), sqlite3.ErrConstraintUnique, e.ExtendedCode)
+		}
 	}
 }
 
 func (s *baseModelFixture) TestUpdate() {
 	var m = baseModel{ID: 1, Field: "test 2"}
-	if assert.NoError(s.T(), upsert(context.Background(), s.db, &m)) {
+	if assert.NoError(s.T(), insert(context.Background(), s.db, &m, true)) {
 		// check db really changed
 		rows, err := s.db.Query("select field from base_model where id = ?", m.ID)
 		if assert.NoError(s.T(), err) {
@@ -119,7 +129,7 @@ func (s *autoCreateRelatedFixture) Test() {
 			{Related: &autoCreateRelatedModel{ID: 1}}},
 		RelatedManyToMany: []*autoCreateRelatedManyToManyModel{{Field: "test 1"}, {Field: "test 2"}},
 	}
-	err := upsert(context.Background(), s.db, &m)
+	err := insert(context.Background(), s.db, &m, true)
 	if assert.NoError(s.T(), err) {
 		// assert model was created
 		assert.NotZero(s.T(), m.ID)

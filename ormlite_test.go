@@ -598,7 +598,7 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	}
 	assert.NoError(s.T(), Upsert(s.db, &m3))
 	assert.Equal(s.T(), int64(2), m3.ID)
-	// check upsert with condition
+	// check insert with condition
 	var mc = modelManyToManyWithCondition{
 		ID:           1,
 		Name:         "name",

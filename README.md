@@ -44,6 +44,10 @@ This function is used to save or update existing model, if model has `primary` f
 ```go
 err := Upsert(db, &s)
 ```
+
+### Insert 
+Function used for inserting Models. Despite of `Upsert` it returns an error in case of constraint errors. 
+
 ### Delete
 This function... yea, it deletes model from database using it's primary key value. If model does not have primary key or it has zero value an error will ne returned.
 Since sometimes it's useful to know that delete operation is really took place in database, function will check number of affected rows and return a special `ErrNoRowsAffected`

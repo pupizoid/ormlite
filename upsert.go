@@ -9,8 +9,27 @@ import (
 	"strings"
 )
 
-type upserter struct {
-	depth int
+type inserter struct {
+	depth  int
+	update bool
+}
+
+func UpsertContext(ctx context.Context, db *sql.DB, m Model) error {
+	return insert(ctx, db, m, true)
+}
+
+// Upsert does the same think as UpsertContext with default background context
+func Upsert(db *sql.DB, m Model) error {
+	return UpsertContext(context.Background(), db, m)
+}
+
+func InsertContext(ctx context.Context, db *sql.DB, m Model) error {
+	return insert(ctx, db, m, false)
+}
+
+// Insert acts like Upsert but don't update conflicting entities
+func Insert(db *sql.DB, m Model) error {
+	return InsertContext(context.Background(), db, m)
 }
 
 func sliceAsArray(s []interface{}) interface{} {
@@ -58,7 +77,7 @@ func buildJoinQuery(info *modelInfo, field modelField) (string, []interface{}, e
 		query, strings.Join(columns, ","), field.reference.table, whereString), args, nil
 }
 
-func buildUpsertQuery(info *modelInfo) (string, []interface{}) {
+func (ins *inserter) buildUpsertQuery(info *modelInfo) (string, []interface{}) {
 	var (
 		query        = "insert into %s(%s) values(%s) %s"
 		conflictTmpl = "on conflict(%s) do update set %s"
@@ -70,11 +89,13 @@ func buildUpsertQuery(info *modelInfo) (string, []interface{}) {
 		updateFields = append(updateFields, fmt.Sprintf("%s = ?", f))
 	}
 
-	if len(indexes) != 0 {
-		conflictStmt = fmt.Sprintf(
-			conflictTmpl, strings.Join(indexes, ","), strings.Join(updateFields, ","))
-		// wee need to double args since we use them twice
-		args = append(args, args...)
+	if ins.update {
+		if len(indexes) != 0 {
+			conflictStmt = fmt.Sprintf(
+				conflictTmpl, strings.Join(indexes, ","), strings.Join(updateFields, ","))
+			// wee need to double args since we use them twice
+			args = append(args, args...)
+		}
 	}
 
 	return fmt.Sprintf(
@@ -146,24 +167,24 @@ func buildDeleteRelationQuery(field modelField, info *modelInfo, keys interface{
 	return fmt.Sprintf(query, field.reference.table, strings.Join(where, AND)), args
 }
 
-func (u *upserter) syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
-	if u.depth > 0 {
+func (ins *inserter) syncRelations(ctx context.Context, db *sql.DB, info *modelInfo) error {
+	if ins.depth > 0 {
 		return nil // don't update relations deeper than 1
 	}
 
-	u.depth++
+	ins.depth++
 
 	for _, field := range info.fields {
 		if isManyToMany(field) {
-			if err := u.syncManyToManyRelation(ctx, db, field, info); err != nil {
+			if err := ins.syncManyToManyRelation(ctx, db, field, info); err != nil {
 				return err
 			}
 		} else if isHasOne(field) {
-			if err := u.syncHasOneRelation(ctx, db, field); err != nil {
+			if err := ins.syncHasOneRelation(ctx, db, field); err != nil {
 				return err
 			}
 		} else if isHasMany(field) {
-			if err := u.syncHasManyRelation(ctx, db, field, info); err != nil {
+			if err := ins.syncHasManyRelation(ctx, db, field, info); err != nil {
 				return err
 			}
 		}
@@ -210,7 +231,7 @@ func getStoredRelations(ctx context.Context, db *sql.DB, field modelField, info 
 	return cols, result, nil
 }
 
-func (u *upserter) syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, info *modelInfo) error {
+func (ins *inserter) syncManyToManyRelation(ctx context.Context, db *sql.DB, field modelField, info *modelInfo) error {
 	refValues, err := getRelationMapping(field.value)
 	if err != nil {
 		return err
@@ -251,7 +272,7 @@ func (u *upserter) syncManyToManyRelation(ctx context.Context, db *sql.DB, field
 	return nil
 }
 
-func (u *upserter) syncHasOneRelation(ctx context.Context, db *sql.DB, field modelField) error {
+func (ins *inserter) syncHasOneRelation(ctx context.Context, db *sql.DB, field modelField) error {
 	if !field.value.IsValid() || field.value.IsNil() {
 		return nil
 	}
@@ -259,14 +280,14 @@ func (u *upserter) syncHasOneRelation(ctx context.Context, db *sql.DB, field mod
 	if err != nil {
 		return errors.Wrap(err, "can't sync has one relation")
 	}
-	// don't upsert related model if it already exists
+	// don't insert related model if it already exists
 	if !pkIsNull(info) {
 		return nil
 	}
-	return u.upsert(ctx, db, field.value.Interface().(IModel))
+	return ins.insert(ctx, db, field.value.Interface().(IModel))
 }
 
-func (u *upserter) syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, model *modelInfo) error {
+func (ins *inserter) syncHasManyRelation(ctx context.Context, db *sql.DB, field modelField, model *modelInfo) error {
 	if !field.value.IsValid() || field.value.IsNil() {
 		return nil
 	}
@@ -283,31 +304,32 @@ items:
 			if model.value.Type().AssignableTo(f.value.Type()) {
 				f.value.Set(model.value)
 			}
-			// we shouldn't upsert existing related models due to the case
+			// we shouldn't insert existing related models due to the case
 			// when we load complex structures with not enough relation depth
 			if isPkField(f) && !isZeroField(f.value) {
 				break items
 			}
 		}
 
-		if err := u.upsert(ctx, db, ri.value.Addr().Interface().(IModel)); err != nil {
+		if err := ins.insert(ctx, db, ri.value.Addr().Interface().(IModel)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func upsert(ctx context.Context, db *sql.DB, m IModel) error {
-	return new(upserter).upsert(ctx, db, m)
+func insert(ctx context.Context, db *sql.DB, m IModel, update bool) error {
+	i := &inserter{update: update}
+	return i.insert(ctx, db, m)
 }
 
-func (u *upserter) upsert(ctx context.Context, db *sql.DB, m IModel) error {
+func (ins *inserter) insert(ctx context.Context, db *sql.DB, m IModel) error {
 	mInfo, err := getModelInfo(m)
 	if err != nil {
 		return err
 	}
 
-	q, a := buildUpsertQuery(mInfo)
+	q, a := ins.buildUpsertQuery(mInfo)
 	if len(a) > 0 {
 		// we need to perform update query only for models that have fields
 		result, err := db.ExecContext(ctx, q, a...)
@@ -339,5 +361,5 @@ func (u *upserter) upsert(ctx context.Context, db *sql.DB, m IModel) error {
 		}
 	}
 
-	return u.syncRelations(ctx, db, mInfo)
+	return ins.syncRelations(ctx, db, mInfo)
 }

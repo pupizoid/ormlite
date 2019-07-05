@@ -648,11 +648,6 @@ func Delete(db *sql.DB, m Model) (sql.Result, error) {
 	return res, err
 }
 
-// Upsert does the same think as UpsertContext with default background context
-func Upsert(db *sql.DB, m Model) error {
-	return upsert(context.Background(), db, m)
-}
-
 type pkFieldInfo struct {
 	relationName string
 	name         string
