@@ -74,7 +74,7 @@ func (s *baseModelFixture) TestUpsert() {
 
 func (s *baseModelFixture) TestUpdate() {
 	var m = baseModel{ID: 1, Field: "test updateConflict"}
-	err := Update(s.db, &m)
+	err := UpdateDeep(s.db, &m)
 	if assert.NoError(s.T(), err) {
 		rows, err := s.db.Query("select field from base_model where id = ?", m.ID)
 		if assert.NoError(s.T(), err) {
@@ -87,7 +87,7 @@ func (s *baseModelFixture) TestUpdate() {
 	}
 
 	m = baseModel{ID: 10, Field: "test updateConflict"}
-	err = Update(s.db, &m)
+	err = UpdateDeep(s.db, &m)
 	if assert.Error(s.T(), err) {
 		assert.True(s.T(), IsNotFound(err))
 		assert.False(s.T(), IsUniqueViolation(err))

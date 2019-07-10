@@ -610,6 +610,14 @@ func (s *manyToManyRelationFixture) TestUpsert() {
 	if assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": mc.ID}), &mc1)) {
 		assert.Equal(s.T(), mc, mc1)
 	}
+	// test Update
+	if assert.NoError(s.T(), Update(s.db, &modelManyToManyWithCondition{ID: 1, Name: "new"})) {
+		var mc2 modelManyToManyWithCondition
+		if assert.NoError(s.T(), QueryStruct(s.db, WithWhere(DefaultOptions(), Where{"rowid": mc.ID}), &mc2)) {
+			assert.Equal(s.T(), "new", mc2.Name)
+			assert.Equal(s.T(), []*relatedModel{{1, "test 1"}, {3, "test 3"}}, mc2.RelatedFalse)
+		}
+	}
 }
 
 func (s *manyToManyRelationFixture) TestCompoundKeys() {

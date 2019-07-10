@@ -404,7 +404,7 @@ func (ins *inserter) insert(ctx context.Context, db *sql.DB, m IModel) error {
 	return ins.syncRelations(ctx, db, mInfo)
 }
 
-func (ins *inserter) update(ctx context.Context, db *sql.DB, m Model) error {
+func (ins *inserter) update(ctx context.Context, db *sql.DB, m Model, deep bool) error {
 	mInfo, err := getModelInfo(m)
 	if err != nil {
 		return err
@@ -424,17 +424,25 @@ func (ins *inserter) update(ctx context.Context, db *sql.DB, m Model) error {
 		return ErrNoRowsAffected
 	}
 
-	return ins.syncRelations(ctx, db, mInfo)
+	if deep {
+		return ins.syncRelations(ctx, db, mInfo)
+	}
+	return nil
 }
 
 // UpdateContext updates model by it's primary keys
-func UpdateContext(ctx context.Context, db *sql.DB, m Model) error {
-	return new(inserter).update(ctx, db, m)
+func UpdateContext(ctx context.Context, db *sql.DB, m Model, deep bool) error {
+	return new(inserter).update(ctx, db, m, deep)
 }
 
 // Update updates model by it's primary keys with background context
 func Update(db *sql.DB, m Model) error {
-	return UpdateContext(context.Background(), db, m)
+	return UpdateContext(context.Background(), db, m, false)
+}
+
+// UpdateDeep is the same as Update but also updates model's relations
+func UpdateDeep(db *sql.DB, m Model) error {
+	return UpdateContext(context.Background(), db, m, true)
 }
 
 func IsUniqueViolation(err error) bool {
