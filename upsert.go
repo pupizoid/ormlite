@@ -361,6 +361,14 @@ func (ins *inserter) insert(ctx context.Context, db *sql.DB, m IModel) error {
 		return err
 	}
 
+	for _, field := range mInfo.fields {
+		if isHasOne(field) {
+			if err := new(inserter).syncHasOneRelation(ctx, db, field); err != nil {
+				return err
+			}
+		}
+	}
+
 	q, a := ins.buildUpsertQuery(mInfo)
 	if len(a) > 0 {
 		// we need to perform update query only for models that have fields

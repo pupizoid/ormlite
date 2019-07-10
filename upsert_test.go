@@ -3,6 +3,7 @@ package ormlite
 import (
 	"context"
 	"database/sql"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -174,6 +175,7 @@ func (s *autoCreateRelatedFixture) Test() {
 	}, &mm)) {
 		assert.EqualValues(s.T(), 1, mm.ID)
 		assert.EqualValues(s.T(), "test", mm.Name)
+		assert.EqualValues(s.T(), 1, mm.RelatedHasOne.ID)
 	}
 }
 
