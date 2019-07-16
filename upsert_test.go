@@ -175,6 +175,7 @@ func (s *autoCreateRelatedFixture) Test() {
 		assert.EqualValues(s.T(), 1, mm.ID)
 		assert.EqualValues(s.T(), "test", mm.Name)
 		assert.EqualValues(s.T(), 1, mm.RelatedHasOne.ID)
+		assert.EqualValues(s.T(), 0, len(mm.RelatedManyToMany))
 	}
 }
 

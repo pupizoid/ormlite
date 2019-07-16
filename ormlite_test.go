@@ -89,6 +89,18 @@ func (s *simpleModelFixture) TearDownSuite() {
 	require.NoError(s.T(), s.db.Close())
 }
 
+func (s *simpleModelFixture) TestCount() {
+	count, err := Count(s.db, &simpleModel{}, nil)
+	if assert.NoError(s.T(), err) {
+		assert.EqualValues(s.T(), 3, count)
+	}
+
+	count, err = Count(s.db, &simpleModel{}, &Options{Where: Where{"id": 1}})
+	if assert.NoError(s.T(), err) {
+		assert.EqualValues(s.T(), 1, count)
+	}
+}
+
 func (s *simpleModelFixture) TestCRUD() {
 	var m1 = simpleModel{TaggedField: "some tagged field"}
 	assert.NoError(s.T(), Upsert(s.db, &m1))

@@ -655,3 +655,35 @@ type pkFieldInfo struct {
 	name         string
 	field        reflect.Value
 }
+
+func Count(db *sql.DB, m Model, opts *Options) (int64, error) {
+	var (
+		query   strings.Builder
+		args    []interface{}
+		divider string
+		count   int64
+	)
+
+	query.WriteString("select count() from ")
+	query.WriteString(m.Table())
+
+	if opts != nil {
+		if opts.Where != nil {
+			query.WriteString(" where ")
+			if len(opts.Where) > 1 && opts.Divider == "" {
+				return 0, errors.New("empty divider with multiple conditions")
+			}
+			divider = opts.Divider
+			for f, v := range opts.Where {
+				query.WriteString(f + " = ?" + divider)
+				args = append(args, v)
+			}
+		}
+	}
+
+	row := db.QueryRow(strings.TrimSuffix(query.String(), divider), args...)
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
