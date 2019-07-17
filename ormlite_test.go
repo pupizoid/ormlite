@@ -175,6 +175,13 @@ func (s *simpleModelFixture) TestOrderBy() {
 	assert.NotEqual(s.T(), int64(1), mm[0].ID)
 }
 
+func (s *simpleModelFixture) TestOrderByWithLimit() {
+	var mm []*simpleModel
+	require.NoError(s.T(), QuerySlice(s.db, &Options{Limit: 2, OrderBy: &OrderBy{Field: "rowid", Order: "desc"}}, &mm))
+	assert.NotEmpty(s.T(), mm)
+	assert.NotEqual(s.T(), int64(2), mm[0].ID)
+}
+
 func TestSimpleModel(t *testing.T) {
 	suite.Run(t, new(simpleModelFixture))
 }

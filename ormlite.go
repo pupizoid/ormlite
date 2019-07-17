@@ -234,14 +234,14 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 				q += fmt.Sprintf(" where %s", strings.Join(keys, opts.Divider))
 			}
 		}
+		if opts.OrderBy != nil {
+			q += fmt.Sprintf(" order by %s %s", opts.OrderBy.Field, opts.OrderBy.Order)
+		}
 		if opts.Limit != 0 {
 			q += fmt.Sprintf(" limit %d", opts.Limit)
 			if opts.Offset != 0 {
 				q += fmt.Sprintf(" offset %d", opts.Offset)
 			}
-		}
-		if opts.OrderBy != nil {
-			q += fmt.Sprintf(" order by %s %s", opts.OrderBy.Field, opts.OrderBy.Order)
 		}
 	}
 	rows, err := db.QueryContext(ctx, q, values...)
