@@ -99,6 +99,18 @@ func (s *simpleModelFixture) TestCount() {
 	if assert.NoError(s.T(), err) {
 		assert.EqualValues(s.T(), 1, count)
 	}
+
+	count, err = Count(s.db, &simpleModel{}, &Options{Where: Where{"tagged_field": "22"}})
+	if assert.NoError(s.T(), err) {
+		assert.EqualValues(s.T(), 1, count)
+	}
+}
+
+func (s *simpleModelFixture) TestSearchLike() {
+	var m simpleModel
+	if assert.NoError(s.T(), QueryStruct(s.db, &Options{Where: Where{"tagged_field": "2"}}, &m)) {
+		assert.EqualValues(s.T(), 3, m.ID)
+	}
 }
 
 func (s *simpleModelFixture) TestCRUD() {

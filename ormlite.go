@@ -210,7 +210,8 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 		if opts.Where != nil && len(opts.Where) != 0 {
 			var keys []string
 			for k, v := range opts.Where {
-				if reflect.TypeOf(v).Kind() == reflect.Slice {
+				switch reflect.TypeOf(v).Kind() {
+				case reflect.Slice:
 					if strings.Contains(k, ",") {
 						rowValueCount := len(strings.Split(k, ","))
 						for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
@@ -225,7 +226,10 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 						keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", count), ",")))
 					}
 					values = append(values, v.([]interface{})...)
-				} else {
+				case reflect.String:
+					keys = append(keys, fmt.Sprintf("%s like ?", k))
+					values = append(values, fmt.Sprintf("%%%s%%", v))
+				default:
 					keys = append(keys, fmt.Sprintf("%s = ?", k))
 					values = append(values, v)
 				}
@@ -675,8 +679,31 @@ func Count(db *sql.DB, m Model, opts *Options) (int64, error) {
 			}
 			divider = opts.Divider
 			for f, v := range opts.Where {
-				query.WriteString(f + " = ?" + divider)
-				args = append(args, v)
+				switch reflect.TypeOf(v).Kind() {
+				case reflect.Slice:
+					if strings.Contains(f, ",") {
+						rowValueCount := len(strings.Split(f, ","))
+						for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
+							query.WriteString("(" + f + ") = (" + strings.Trim(strings.Repeat("?,", rowValueCount), ",") + ")" + divider)
+							// keys = append(keys, fmt.Sprintf("(%s) = (%s)", f, strings.Trim(strings.Repeat("?,", rowValueCount), ",")))
+						}
+						opts.Divider = OR
+					} else {
+						count := len(v.([]interface{}))
+						if opts.Limit != 0 && opts.Limit < count {
+							count = opts.Limit
+						}
+						query.WriteString(f + " in (" + strings.Trim(strings.Repeat("?,", count), ",") + ")" + divider)
+						//keys = append(keys, fmt.Sprintf("%s in (%s)", f, strings.Trim(strings.Repeat("?,", count), ",")))
+					}
+					args = append(args, v.([]interface{})...)
+				case reflect.String:
+					query.WriteString(f + " like ?" + divider)
+					args = append(args, fmt.Sprintf("%%%s%%", v))
+				default:
+					query.WriteString(f + " = ?" + divider)
+					args = append(args, v)
+				}
 			}
 		}
 	}
