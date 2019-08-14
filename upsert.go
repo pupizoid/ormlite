@@ -86,7 +86,7 @@ func buildUpdateQuery(info *modelInfo) (string, []interface{}) {
 	)
 
 	for _, f := range info.fields {
-		if isOmittedField(f) ||
+		if isOmittedField(f) || isExpressionField(f) ||
 			isReferenceField(f) && !isHasOne(f) {
 			continue
 		}
