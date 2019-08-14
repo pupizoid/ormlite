@@ -155,6 +155,9 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 		mField.Type += omittedField
 	default:
 		mField.Type += regularField
+		if _, ok := mField.value.Interface().(Expression); ok {
+			mField.Type += expField
+		}
 	}
 	if lookForSetting(tag, "primary") != "" {
 		mField.reference.column = lookForSetting(tag, "ref")
@@ -164,9 +167,6 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 		mField.Type += uniqueField
 	}
 
-	if _, ok := mField.value.Interface().(Expression); ok {
-		mField.Type += expField
-	}
 	return mField, nil
 }
 
