@@ -1,6 +1,8 @@
 package ormlite
 
 import (
+	"database/sql"
+	"database/sql/driver"
 	"github.com/iancoleman/strcase"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
@@ -12,6 +14,12 @@ type IModel interface {
 	Table() string
 }
 
+type Expression interface {
+	Column() string
+	sql.Scanner
+	driver.Valuer
+}
+
 type fieldType int
 
 const (
@@ -20,6 +28,7 @@ const (
 	omittedField
 	pkField
 	uniqueField
+	expField
 )
 
 func isUniqueField(field modelField) bool {
@@ -40,6 +49,10 @@ func isZeroField(field reflect.Value) bool {
 
 func isOmittedField(field modelField) bool {
 	return field.Type&omittedField == omittedField
+}
+
+func isExpressionField(field modelField) bool {
+	return field.Type&expField == expField
 }
 
 func isHasOne(field modelField) bool {
@@ -125,6 +138,10 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 	mField.column = getFieldColumnName(field)
 	mField.value = mValue.Field(fIndex)
 	mField.reference.rType = field.Type
+	//
+	if _, ok := mField.value.Interface().(Expression); ok {
+		mField.Type += expField
+	}
 	// parse references
 	switch {
 	case lookForSetting(tag, "many_to_many") != "":
@@ -260,7 +277,7 @@ func getModelColumns(fields []modelField) ([]string, []string, []interface{}) {
 		args             []interface{}
 	)
 	for _, field := range fields {
-		if isOmittedField(field) ||
+		if isOmittedField(field) || isExpressionField(field) ||
 			isReferenceField(field) && !isHasOne(field) {
 			continue
 		}

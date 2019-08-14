@@ -140,7 +140,11 @@ func lookForSetting(s, setting string) string {
 }
 
 func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
-	var columns []columnInfo
+
+	var (
+		columns []columnInfo
+		v       = reflect.New(t)
+	)
 
 	for i := 0; i < t.NumField(); i++ {
 		if !isExportedField(t.Field(i)) {
@@ -152,7 +156,12 @@ func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
 			continue
 		}
 
-		var ci = columnInfo{Index: i, Name: getFieldColumnName(t.Field(i))}
+		var ci = columnInfo{Index: i}
+		if exp, ok := v.Elem().Field(i).Interface().(Expression); ok {
+			ci.Name = exp.Column()
+		} else {
+			ci.Name = getFieldColumnName(t.Field(i))
+		}
 
 		if ri := extractRelationInfo(t.Field(i)); ri != nil {
 			ci.RelationInfo = *ri
@@ -511,7 +520,11 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 			relations[ri] = model.Field(i)
 			continue
 		}
-		columns = append(columns, getFieldColumnName(model.Type().Field(i)))
+		if exp, ok := model.Field(i).Interface().(Expression); ok {
+			columns = append(columns, exp.Column())
+		} else {
+			columns = append(columns, getFieldColumnName(model.Type().Field(i)))
+		}
 		fieldPTRs = append(fieldPTRs, model.Field(i).Addr().Interface())
 	}
 
@@ -577,7 +590,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 	for rows.Next() {
 		var (
 			se           = reflect.New(modelType)
-			fptrs        []interface{}
+			fPtrs        []interface{}
 			entryColInfo = make([]columnInfo, len(colInfo))
 		)
 
@@ -589,17 +602,17 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 				if ci.Index == i {
 					if ci.RelationInfo.Type == hasOne {
 						pToPk := &entryColInfo[k].RelationInfo.RefPkValue
-						fptrs = append(fptrs, pToPk)
+						fPtrs = append(fPtrs, pToPk)
 					} else if ci.RelationInfo.Type == hasMany || ci.RelationInfo.Type == manyToMany {
 						continue
 					} else {
-						fptrs = append(fptrs, se.Elem().Field(i).Addr().Interface())
+						fPtrs = append(fPtrs, se.Elem().Field(i).Addr().Interface())
 					}
 				}
 			}
 		}
 
-		if err := rows.Scan(fptrs...); err != nil {
+		if err := rows.Scan(fPtrs...); err != nil {
 			return err
 		}
 
