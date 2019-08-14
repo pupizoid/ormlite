@@ -138,10 +138,6 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 	mField.column = getFieldColumnName(field)
 	mField.value = mValue.Field(fIndex)
 	mField.reference.rType = field.Type
-	//
-	if _, ok := mField.value.Interface().(Expression); ok {
-		mField.Type += expField
-	}
 	// parse references
 	switch {
 	case lookForSetting(tag, "many_to_many") != "":
@@ -166,6 +162,10 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 	}
 	if lookForSetting(tag, "unique") != "" {
 		mField.Type += uniqueField
+	}
+
+	if _, ok := mField.value.Interface().(Expression); ok {
+		mField.Type += expField
 	}
 	return mField, nil
 }
