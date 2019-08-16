@@ -542,7 +542,7 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	}
 
 	{
-		if len(opts.Related) != 0 {
+		if opts != nil && len(opts.Related) != 0 {
 			searchModels := map[reflect.Type][]Model{}
 			for _, sm := range opts.Related {
 				mt := reflect.TypeOf(sm)
