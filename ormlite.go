@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"reflect"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ type Options struct {
 	Offset        int      `json:"offset"`
 	OrderBy       *OrderBy `json:"order_by"`
 	RelationDepth int      `json:"relation_depth"`
+	Related       []IModel `json:"related"`
 }
 
 // DefaultOptions returns default options for query
@@ -105,11 +107,12 @@ type Model interface {
 }
 
 type relationInfo struct {
-	Table      string
-	Type       relationType
-	FieldName  string
-	Condition  string
-	RefPkValue interface{}
+	Table       string
+	Type        relationType
+	RelatedType reflect.Type
+	FieldName   string
+	Condition   string
+	RefPkValue  interface{}
 }
 
 type columnInfo struct {
@@ -184,6 +187,7 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 
 	if strings.Contains(t, "has_one") {
 		info.Type = hasOne
+		info.RelatedType = field.Type
 		info.FieldName = getFieldColumnName(field)
 
 		for i := 0; i < field.Type.Elem().NumField(); i++ {
@@ -196,6 +200,7 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 		}
 	} else if strings.Contains(t, "many_to_many") {
 		info.Type = manyToMany
+		info.RelatedType = field.Type.Elem()
 		tOption := lookForSetting(t, "table")
 		//if strings.Contains(tOption, "(") {
 		//	info.Condition = tOption[strings.Index(tOption, "(")+1 : strings.Index(tOption, ")")]
@@ -205,6 +210,7 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 		info.Table = tOption
 		info.FieldName = lookForSetting(t, "field")
 	} else if strings.Contains(t, "has_many") {
+		info.RelatedType = field.Type.Elem()
 		info.Type = hasMany
 	} else {
 		return nil
@@ -297,7 +303,7 @@ func loadRelationsForSlice(ctx context.Context, db *sql.DB, opts *Options, slice
 						if err != nil {
 							return err
 						}
-						if err := loadHasManyRelation(ctx, db, modelValue.Field(ci.Index), pkFields, slicePtr.Index(i).Type(), opts); err != nil {
+						if err := loadHasManyRelation(ctx, db, ci.RelationInfo, modelValue.Field(ci.Index), pkFields, slicePtr.Index(i).Type(), opts); err != nil {
 							return err
 						}
 					case manyToMany:
@@ -328,7 +334,7 @@ func loadStructRelations(ctx context.Context, db *sql.DB, opts *Options, out Mod
 					return err
 				}
 			} else if ri.Type == hasMany {
-				if err := loadHasManyRelation(ctx, db, rv, pkField, reflect.TypeOf(out), opts); err != nil {
+				if err := loadHasManyRelation(ctx, db, *ri, rv, pkField, reflect.TypeOf(out), opts); err != nil {
 					return err
 				}
 			}
@@ -337,7 +343,7 @@ func loadStructRelations(ctx context.Context, db *sql.DB, opts *Options, out Mod
 	return nil
 }
 
-func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue reflect.Value, pkFields []pkFieldInfo, parentType reflect.Type, options *Options) error {
+func loadHasManyRelation(ctx context.Context, db *sql.DB, ri relationInfo, fieldValue reflect.Value, pkFields []pkFieldInfo, parentType reflect.Type, options *Options) error {
 	if fieldValue.Kind() != reflect.Slice {
 		return fmt.Errorf("can't load relations: wrong field type: %v", fieldValue.Type())
 	}
@@ -350,19 +356,22 @@ func loadHasManyRelation(ctx context.Context, db *sql.DB, fieldValue reflect.Val
 		return fmt.Errorf("can't load relations: wrong field type: %v", rve)
 	}
 
-	var relField *reflect.StructField
+	where := Where{}
 	for i := 0; i < rve.NumField(); i++ {
 		f := rve.Field(i)
 		if f.Type.AssignableTo(parentType) {
-			relField = &f
+			for _, pkf := range pkFields {
+				where[getFieldColumnName(f)] = pkf.field.Interface()
+			}
 		}
-
 	}
-	if relField == nil {
+
+	if len(where) == 0 {
 		return errors.New("failed to load has many relation since none fields of related type meet parent type")
 	}
-	return QuerySliceContext(ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1, Limit: options.Limit},
-		Where{getFieldColumnName(*relField): pkFields[0].field.Interface()}), fieldValue.Addr().Interface())
+
+	return QuerySliceContext(ctx, db, WithWhere(&Options{RelationDepth: options.RelationDepth - 1, Limit: options.Limit, Divider: OR},
+		where), fieldValue.Addr().Interface())
 }
 
 func loadHasOneRelation(ctx context.Context, db *sql.DB, ri *relationInfo, rv reflect.Value, options *Options) error {
@@ -533,6 +542,20 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	}
 
 	{
+		if len(opts.Related) != 0 {
+			searchModels := map[reflect.Type][]Model{}
+			for _, sm := range opts.Related {
+				mt := reflect.TypeOf(sm)
+				if slice, ok := searchModels[mt]; ok {
+					slice = append(slice, sm)
+				} else {
+					searchModels[mt] = []Model{sm}
+				}
+			}
+			for rInfo := range relations {
+				spew.Dump(rInfo)
+			}
+		}
 		rows, err := queryWithOptions(ctx, db, out.Table(), columns, opts)
 		if err != nil {
 			return err
@@ -698,7 +721,6 @@ func Count(db *sql.DB, m Model, opts *Options) (int64, error) {
 						rowValueCount := len(strings.Split(f, ","))
 						for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
 							query.WriteString("(" + f + ") = (" + strings.Trim(strings.Repeat("?,", rowValueCount), ",") + ")" + divider)
-							// keys = append(keys, fmt.Sprintf("(%s) = (%s)", f, strings.Trim(strings.Repeat("?,", rowValueCount), ",")))
 						}
 						opts.Divider = OR
 					} else {
@@ -707,7 +729,6 @@ func Count(db *sql.DB, m Model, opts *Options) (int64, error) {
 							count = opts.Limit
 						}
 						query.WriteString(f + " in (" + strings.Trim(strings.Repeat("?,", count), ",") + ")" + divider)
-						//keys = append(keys, fmt.Sprintf("%s in (%s)", f, strings.Trim(strings.Repeat("?,", count), ",")))
 					}
 					args = append(args, v.([]interface{})...)
 				case reflect.String:

@@ -160,8 +160,9 @@ func (s *simpleModelFixture) TestQuerySliceWithCycleRelation() {
 	var mm []*simpleModelWithCycleRelation
 	assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm))
 	if assert.NotEmpty(s.T(), mm) {
-		assert.NotNil(s.T(), mm[0].Related)
-		assert.Nil(s.T(), mm[0].Related.Related)
+		if assert.NotNil(s.T(), mm[0].Related) {
+			assert.Nil(s.T(), mm[0].Related.Related)
+		}
 	}
 }
 
@@ -881,4 +882,52 @@ func (s *mtmCompoundKeyAsHasOneRelationFixture) Test() {
 
 func TestCompoundKeyAsHasOneRelation(t *testing.T) {
 	suite.Run(t, new(mtmCompoundKeyAsHasOneRelationFixture))
+}
+
+type testSearchByRelatedSuite struct {
+	suite.Suite
+	db *sql.DB
+}
+
+type testSearchBaseModel struct {
+	ID         int64 `ormlite:"primary,ref=base_id"`
+	Name       string
+	HasOne     *testSearchHasOneModel    `ormlite:"has_one"`
+	HasMany    []*testSearchHasManyModel `ormlite:"has_many"`
+	ManyToMany []*testSearchMTMModel
+}
+
+func (*testSearchBaseModel) Table() string { return "base_mode" }
+
+type testSearchHasOneModel struct {
+	ID int64 `ormlite:"primary,ref=has_one_id"`
+}
+
+func (*testSearchHasOneModel) Table() string { return "has_one_model" }
+
+type testSearchMTMModel struct {
+	ID   int64 `ormlite:"primary,ref=mtm_id"`
+	Name string
+}
+
+func (*testSearchMTMModel) Table() string { return "mtm_model" }
+
+type testSearchHasManyModel struct {
+	ID         int64 `ormlite:"primary"`
+	BaseModel1 *testSearchBaseModel
+	BaseModel2 *testSearchBaseModel
+}
+
+func (*testSearchHasManyModel) Table() string { return "has_many_model" }
+
+func (s *testSearchByRelatedSuite) SetupSuite() {
+	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(s.T(), err)
+
+	_, err = db.Exec(`
+		create table base_model(id integer primary key, name text, has_one integer);
+		create table has_one_model(id integer primary key); 
+	`)
+	require.NoError(s.T(), err)
+	s.db = db
 }
