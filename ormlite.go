@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"reflect"
 	"strings"
 	"time"
@@ -65,7 +64,8 @@ type Options struct {
 	Offset        int      `json:"offset"`
 	OrderBy       *OrderBy `json:"order_by"`
 	RelationDepth int      `json:"relation_depth"`
-	Related       []IModel `json:"related"`
+	RelatedTo     []IModel `json:"related"`
+	joins         []string
 }
 
 // DefaultOptions returns default options for query
@@ -222,6 +222,9 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 	var values []interface{}
 	q := fmt.Sprintf("select %s from %s", strings.Join(columns, ","), table)
 	if opts != nil {
+		if len(opts.joins) != 0 {
+			q += strings.Join(opts.joins, " ")
+		}
 		if opts.Where != nil && len(opts.Where) != 0 {
 			var keys []string
 			for k, v := range opts.Where {
@@ -542,9 +545,9 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 	}
 
 	{
-		if opts != nil && len(opts.Related) != 0 {
+		if opts != nil && len(opts.RelatedTo) != 0 {
 			searchModels := map[reflect.Type][]Model{}
-			for _, sm := range opts.Related {
+			for _, sm := range opts.RelatedTo {
 				mt := reflect.TypeOf(sm)
 				if slice, ok := searchModels[mt]; ok {
 					slice = append(slice, sm)
@@ -552,9 +555,9 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 					searchModels[mt] = []Model{sm}
 				}
 			}
-			for rInfo := range relations {
-				spew.Dump(rInfo)
-			}
+			//for rInfo := range relations {
+			//	spew.Dump(rInfo)
+			//}
 		}
 		rows, err := queryWithOptions(ctx, db, out.Table(), columns, opts)
 		if err != nil {
@@ -587,6 +590,12 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 		return errors.New("slice contain type that does not implement Model interface")
 	}
 
+	modelInfo, err := getModelInfo(reflect.New(slicePtr.Type().Elem().Elem()).Interface())
+	if err != nil {
+		return errors.New("slice contain type that does not implement Model interface")
+
+	}
+
 	var (
 		modelType       = slicePtr.Type().Elem().Elem()
 		colNames        []string
@@ -600,8 +609,76 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 
 	for _, ci := range colInfo {
 		if ci.RelationInfo.Type == noRelation || ci.RelationInfo.Type == hasOne {
-			colNames = append(colNames, ci.Name)
+			if strings.Contains(ci.Name, "id") {
+				colNames = append(colNames, fmt.Sprintf("%s.%s", modelInfo.table, ci.Name))
+			} else {
+				colNames = append(colNames, ci.Name)
+			}
 		}
+	}
+
+	if opts != nil && len(opts.RelatedTo) != 0 {
+		searchModels := map[reflect.Type][]Model{}
+		for _, sm := range opts.RelatedTo {
+			mt := reflect.TypeOf(sm)
+			if slice, ok := searchModels[mt]; ok {
+				slice = append(slice, sm)
+			} else {
+				searchModels[mt] = []Model{sm}
+			}
+		}
+		for _, ci := range colInfo {
+			if slice, ok := searchModels[ci.RelationInfo.RelatedType]; ok {
+				switch ci.RelationInfo.Type {
+				case hasMany:
+					modelStructType := ci.RelationInfo.RelatedType.Elem()
+					relModelInfo, err := getModelInfo(reflect.New(modelStructType).Interface().(IModel))
+					if err != nil {
+						return errors.Wrap(err, "can't search related to")
+					}
+					var (
+						joinQuery  strings.Builder
+						conditions []string
+					)
+					for _, field := range modelInfo.fields {
+						if isPkField(field) {
+							joinQuery.WriteString(" left join " + relModelInfo.table + " on ")
+							for _, relField := range relModelInfo.fields {
+								if modelInfo.value.Addr().Type().AssignableTo(relField.value.Type()) {
+									conditions = append(conditions, fmt.Sprintf(
+										"%s.%s = %s.%s", modelInfo.table, field.column, relModelInfo.table, relField.column))
+								}
+								if isPkField(relField) {
+									//relPkFieldValue =
+									for _, sm := range slice {
+										// add where conditions
+										val, err := getModelValue(sm)
+										if err != nil {
+											return errors.Wrap(err, "can't get model value of related one")
+										}
+										pFields, err := getPrimaryFieldsInfo(val)
+										if err != nil {
+											return errors.Wrap(err, "can't get related model primary fields")
+										}
+										for _, pField := range pFields {
+											addWhereClause(opts, fmt.Sprintf("%s.%s", relModelInfo.table, pField.name), pField.field.Interface())
+										}
+									}
+								}
+							}
+
+						}
+
+					}
+					if len(conditions) != 0 {
+						joinQuery.WriteString(strings.Join(conditions, OR))
+						opts.joins = append(opts.joins, joinQuery.String())
+					}
+				}
+				//spew.Dump(slice)
+			}
+		}
+		//spew.Dump(searchModels)
 	}
 
 	rows, err := queryWithOptions(
@@ -643,6 +720,16 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 	}
 
 	return loadRelationsForSlice(ctx, db, opts, slicePtr, colInfoPerEntry)
+}
+
+func addWhereClause(options *Options, s string, i interface{}) {
+	if options == nil {
+		options = new(Options)
+	}
+	if options.Where == nil {
+		options.Where = make(Where)
+	}
+	options.Where[s] = i
 }
 
 // Delete removes model object from database by it's primary key

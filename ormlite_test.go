@@ -892,15 +892,16 @@ type testSearchByRelatedSuite struct {
 type testSearchBaseModel struct {
 	ID         int64 `ormlite:"primary,ref=base_id"`
 	Name       string
-	HasOne     *testSearchHasOneModel    `ormlite:"has_one"`
+	HasOne     *testSearchHasOneModel    `ormlite:"has_one,col=has_one"`
 	HasMany    []*testSearchHasManyModel `ormlite:"has_many"`
-	ManyToMany []*testSearchMTMModel
+	ManyToMany []*testSearchMTMModel     `ormlite:"many_to_many,table=relation_table,field=base_id"`
 }
 
-func (*testSearchBaseModel) Table() string { return "base_mode" }
+func (*testSearchBaseModel) Table() string { return "base_model" }
 
 type testSearchHasOneModel struct {
-	ID int64 `ormlite:"primary,ref=has_one_id"`
+	ID   int64 `ormlite:"primary,ref=some_id"`
+	Name string
 }
 
 func (*testSearchHasOneModel) Table() string { return "has_one_model" }
@@ -913,9 +914,9 @@ type testSearchMTMModel struct {
 func (*testSearchMTMModel) Table() string { return "mtm_model" }
 
 type testSearchHasManyModel struct {
-	ID         int64 `ormlite:"primary"`
-	BaseModel1 *testSearchBaseModel
-	BaseModel2 *testSearchBaseModel
+	ID         int64                `ormlite:"primary"`
+	BaseModel1 *testSearchBaseModel `ormlite:"has_one,col=bm1"`
+	BaseModel2 *testSearchBaseModel `ormlite:"has_one,col=bm2"`
 }
 
 func (*testSearchHasManyModel) Table() string { return "has_many_model" }
@@ -926,8 +927,81 @@ func (s *testSearchByRelatedSuite) SetupSuite() {
 
 	_, err = db.Exec(`
 		create table base_model(id integer primary key, name text, has_one integer);
-		create table has_one_model(id integer primary key); 
+		create table has_one_model(id integer primary key, name text);
+		create table has_many_model(id integer primary key, bm1 integer, bm2 integer);
+		create table mtm_model(id integer primary key, name text);
+		create table relation_table(base_id integer, mtm_id integer); 
 	`)
 	require.NoError(s.T(), err)
 	s.db = db
+
+	var hasOneModel = testSearchHasOneModel{Name: "has one"}
+
+	require.NoError(s.T(), Insert(db, &testSearchMTMModel{Name: "test"}))
+	require.NoError(s.T(), Insert(db, &hasOneModel))
+	err = Upsert(db, &testSearchHasManyModel{
+		BaseModel1: &testSearchBaseModel{ID: 1},
+		BaseModel2: &testSearchBaseModel{ID: 1},
+	})
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), Upsert(db, &testSearchHasManyModel{
+		BaseModel1: &testSearchBaseModel{ID: 1},
+		BaseModel2: &testSearchBaseModel{ID: 2},
+	}))
+	require.NoError(s.T(), Insert(db, &testSearchMTMModel{Name: "mtm 1"}))
+	require.NoError(s.T(), Insert(db, &testSearchMTMModel{Name: "mtm 2"}))
+	require.NoError(s.T(), Insert(db, &testSearchMTMModel{Name: "mtm 3"}))
+
+	require.NoError(s.T(), Upsert(db, &testSearchBaseModel{
+		Name: "Test 1", HasOne: &hasOneModel,
+		ManyToMany: []*testSearchMTMModel{{ID: 1}, {ID: 2}, {ID: 3}},
+	}))
+
+	require.NoError(s.T(), Upsert(db, &testSearchBaseModel{
+		Name: "Test 2", HasOne: &hasOneModel,
+		ManyToMany: []*testSearchMTMModel{{ID: 1}},
+	}))
+}
+
+func (s testSearchByRelatedSuite) TestScheme() {
+	var mm []*testSearchBaseModel
+	if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm)) {
+		assert.NotNil(s.T(), mm)
+		assert.Len(s.T(), mm, 2)
+	}
+}
+
+func (s *testSearchByRelatedSuite) TestSearchByHasMany() {
+	var mm []*testSearchBaseModel
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 1}}}, &mm)) {
+		assert.Len(s.T(), mm, 1)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 2}}}, &mm)) {
+		assert.Len(s.T(), mm, 2)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 3}}}, &mm)) {
+		assert.Len(s.T(), mm, 0)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 2}}, Where: Where{"name": "Test 1"}, Divider: AND}, &mm)) {
+		assert.Len(s.T(), mm, 1)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 1}}, Where: Where{"name": "Test 2"}, Divider: AND}, &mm)) {
+		assert.Len(s.T(), mm, 0)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 2}}, Limit: 1}, &mm)) {
+		assert.Len(s.T(), mm, 1)
+	}
+}
+
+func (s *testSearchByRelatedSuite) TestSearchByManyToMany() {
+
+}
+
+func TestSearchByRelated(t *testing.T) {
+	suite.Run(t, new(testSearchByRelatedSuite))
 }
