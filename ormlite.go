@@ -119,6 +119,7 @@ type columnInfo struct {
 	RelationInfo relationInfo
 	Name         string
 	Index        int
+	Primary      bool
 }
 
 func isExportedField(f reflect.StructField) bool {
@@ -170,6 +171,10 @@ func getColumnInfo(t reflect.Type) ([]columnInfo, error) {
 			ci.RelationInfo = *ri
 		} else {
 			ci.RelationInfo = relationInfo{Type: noRelation}
+		}
+
+		if lookForSetting(tag, "primary") != "" {
+			ci.Primary = true
 		}
 
 		columns = append(columns, ci)
@@ -609,7 +614,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 
 	for _, ci := range colInfo {
 		if ci.RelationInfo.Type == noRelation || ci.RelationInfo.Type == hasOne {
-			if strings.Contains(ci.Name, "id") {
+			if ci.Primary {
 				colNames = append(colNames, fmt.Sprintf("%s.%s", modelInfo.table, ci.Name))
 			} else {
 				colNames = append(colNames, ci.Name)
