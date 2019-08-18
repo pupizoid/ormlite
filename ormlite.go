@@ -690,10 +690,6 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 						if isPkField(field) {
 							joinQuery.WriteString(" left join " + ci.RelationInfo.Table + " on ")
 							for _, relField := range relModelInfo.fields {
-								//if isPkField(rel) {
-								//	conditions = append(conditions, fmt.Sprintf(
-								//		"%s.%s = %s.%s", modelInfo.table, field.column, ci.RelationInfo.Table, relField.reference.column))
-								//}
 								if isPkField(relField) {
 									conditions = append(conditions, fmt.Sprintf(
 										"%s.%s = %s.%s", modelInfo.table, field.column, ci.RelationInfo.Table, relField.reference.column))
@@ -728,6 +724,10 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 		ctx, db, reflect.New(modelType).Interface().(Model).Table(), colNames, opts)
 	if err != nil {
 		return err
+	}
+
+	if opts != nil {
+		opts.joins = nil
 	}
 
 	for rows.Next() {

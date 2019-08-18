@@ -1000,10 +1000,6 @@ func (s *testSearchByRelatedSuite) TestSearchByHasMany() {
 	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 2}, &testSearchHasManyModel{ID: 1}}}, &mm)) {
 		assert.Len(s.T(), mm, 2)
 	}
-	mm = nil
-	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 0}}}, &mm)) {
-		assert.Len(s.T(), mm, 0, "Query by zero model should not return any")
-	}
 }
 
 func (s *testSearchByRelatedSuite) TestSearchByManyToMany() {
