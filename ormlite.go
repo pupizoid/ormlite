@@ -649,7 +649,6 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 										"%s.%s = %s.%s", modelInfo.table, field.column, relModelInfo.table, relField.column))
 								}
 								if isPkField(relField) {
-									//relPkFieldValue =
 									for _, sm := range slice {
 										// add where conditions
 										val, err := getModelValue(sm)
@@ -666,19 +665,58 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 									}
 								}
 							}
-
 						}
-
+					}
+					if len(conditions) != 0 {
+						joinQuery.WriteString(strings.Join(conditions, OR))
+						opts.joins = append(opts.joins, joinQuery.String())
+					}
+				case manyToMany:
+					modelStructType := ci.RelationInfo.RelatedType.Elem()
+					relModelInfo, err := getModelInfo(reflect.New(modelStructType).Interface().(IModel))
+					if err != nil {
+						return errors.Wrap(err, "can't search related to")
+					}
+					var (
+						joinQuery  strings.Builder
+						conditions []string
+					)
+					for _, field := range modelInfo.fields {
+						if isPkField(field) {
+							joinQuery.WriteString(" left join " + ci.RelationInfo.Table + " on ")
+							for _, relField := range relModelInfo.fields {
+								//if isPkField(rel) {
+								//	conditions = append(conditions, fmt.Sprintf(
+								//		"%s.%s = %s.%s", modelInfo.table, field.column, ci.RelationInfo.Table, relField.reference.column))
+								//}
+								if isPkField(relField) {
+									conditions = append(conditions, fmt.Sprintf(
+										"%s.%s = %s.%s", modelInfo.table, field.column, ci.RelationInfo.Table, relField.reference.column))
+									for _, sm := range slice {
+										// add where conditions
+										val, err := getModelValue(sm)
+										if err != nil {
+											return errors.Wrap(err, "can't get model value of related one")
+										}
+										pFields, err := getPrimaryFieldsInfo(val)
+										if err != nil {
+											return errors.Wrap(err, "can't get related model primary fields")
+										}
+										for _, pField := range pFields {
+											addWhereClause(opts, fmt.Sprintf("%s.%s", ci.RelationInfo.Table, pField.relationName), pField.field.Interface())
+										}
+									}
+								}
+							}
+						}
 					}
 					if len(conditions) != 0 {
 						joinQuery.WriteString(strings.Join(conditions, OR))
 						opts.joins = append(opts.joins, joinQuery.String())
 					}
 				}
-				//spew.Dump(slice)
 			}
 		}
-		//spew.Dump(searchModels)
 	}
 
 	rows, err := queryWithOptions(

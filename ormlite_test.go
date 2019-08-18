@@ -996,10 +996,29 @@ func (s *testSearchByRelatedSuite) TestSearchByHasMany() {
 	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 2}}, Limit: 1}, &mm)) {
 		assert.Len(s.T(), mm, 1)
 	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 2}, &testSearchHasManyModel{ID: 1}}}, &mm)) {
+		assert.Len(s.T(), mm, 2)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchHasManyModel{ID: 0}}}, &mm)) {
+		assert.Len(s.T(), mm, 0, "Query by zero model should not return any")
+	}
 }
 
 func (s *testSearchByRelatedSuite) TestSearchByManyToMany() {
-
+	var mm []*testSearchBaseModel
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchMTMModel{ID: 1}}}, &mm)) {
+		assert.Len(s.T(), mm, 2)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchMTMModel{ID: 2}}}, &mm)) {
+		assert.Len(s.T(), mm, 1)
+	}
+	mm = nil
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchMTMModel{ID: 0}}}, &mm)) {
+		assert.Len(s.T(), mm, 0)
+	}
 }
 
 func TestSearchByRelated(t *testing.T) {
