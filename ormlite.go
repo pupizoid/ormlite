@@ -966,28 +966,32 @@ func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 			}
 			divider = opts.Divider
 			for f, v := range opts.Where {
-				switch reflect.TypeOf(v).Kind() {
-				case reflect.Slice:
-					if strings.Contains(f, ",") {
-						rowValueCount := len(strings.Split(f, ","))
-						for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
-							query.WriteString("(" + f + ") = (" + strings.Trim(strings.Repeat("?,", rowValueCount), ",") + ")" + divider)
+				if v != nil {
+					switch reflect.TypeOf(v).Kind() {
+					case reflect.Slice:
+						if strings.Contains(f, ",") {
+							rowValueCount := len(strings.Split(f, ","))
+							for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
+								query.WriteString("(" + f + ") = (" + strings.Trim(strings.Repeat("?,", rowValueCount), ",") + ")" + divider)
+							}
+							opts.Divider = OR
+						} else {
+							count := len(v.([]interface{}))
+							if opts.Limit != 0 && opts.Limit < count {
+								count = opts.Limit
+							}
+							query.WriteString(f + " in (" + strings.Trim(strings.Repeat("?,", count), ",") + ")" + divider)
 						}
-						opts.Divider = OR
-					} else {
-						count := len(v.([]interface{}))
-						if opts.Limit != 0 && opts.Limit < count {
-							count = opts.Limit
-						}
-						query.WriteString(f + " in (" + strings.Trim(strings.Repeat("?,", count), ",") + ")" + divider)
+						args = append(args, v.([]interface{})...)
+					case reflect.String:
+						query.WriteString(f + " like ?" + divider)
+						args = append(args, fmt.Sprintf("%%%s%%", v))
+					default:
+						query.WriteString(f + " = ?" + divider)
+						args = append(args, v)
 					}
-					args = append(args, v.([]interface{})...)
-				case reflect.String:
-					query.WriteString(f + " like ?" + divider)
-					args = append(args, fmt.Sprintf("%%%s%%", v))
-				default:
-					query.WriteString(f + " = ?" + divider)
-					args = append(args, v)
+				} else {
+					query.WriteString(f + " is null" + divider)
 				}
 			}
 		}
