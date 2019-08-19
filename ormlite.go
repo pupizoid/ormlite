@@ -233,28 +233,33 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 		if opts.Where != nil && len(opts.Where) != 0 {
 			var keys []string
 			for k, v := range opts.Where {
-				switch reflect.TypeOf(v).Kind() {
-				case reflect.Slice:
-					if strings.Contains(k, ",") {
-						rowValueCount := len(strings.Split(k, ","))
-						for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
-							keys = append(keys, fmt.Sprintf("(%s) = (%s)", k, strings.Trim(strings.Repeat("?,", rowValueCount), ",")))
+				if v != nil {
+					switch reflect.TypeOf(v).Kind() {
+					case reflect.Slice:
+						if strings.Contains(k, ",") {
+							rowValueCount := len(strings.Split(k, ","))
+							for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
+								keys = append(keys, fmt.Sprintf("(%s) = (%s)", k, strings.Trim(strings.Repeat("?,", rowValueCount), ",")))
+							}
+							opts.Divider = OR
+						} else {
+							count := len(v.([]interface{}))
+							if opts.Limit != 0 && opts.Limit < count {
+								count = opts.Limit
+							}
+							keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", count), ",")))
 						}
-						opts.Divider = OR
-					} else {
-						count := len(v.([]interface{}))
-						if opts.Limit != 0 && opts.Limit < count {
-							count = opts.Limit
-						}
-						keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", count), ",")))
+						values = append(values, v.([]interface{})...)
+					case reflect.String:
+						keys = append(keys, fmt.Sprintf("%s like ?", k))
+						values = append(values, fmt.Sprintf("%%%s%%", v))
+					default:
+						keys = append(keys, fmt.Sprintf("%s = ?", k))
+						values = append(values, v)
 					}
-					values = append(values, v.([]interface{})...)
-				case reflect.String:
-					keys = append(keys, fmt.Sprintf("%s like ?", k))
-					values = append(values, fmt.Sprintf("%%%s%%", v))
-				default:
-					keys = append(keys, fmt.Sprintf("%s = ?", k))
-					values = append(values, v)
+				} else {
+					keys = append(keys, fmt.Sprintf("%s is null", k))
+					//values = append(values, v)
 				}
 			}
 			if len(keys) > 0 {
@@ -665,7 +670,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 											return errors.Wrap(err, "can't get related model primary fields")
 										}
 										for _, pField := range pFields {
-											addWhereClause(opts, fmt.Sprintf("%s.%s", relModelInfo.table, pField.name), pField.field.Interface())
+											addWhereClause(opts, fmt.Sprintf("%s.%s", relModelInfo.table, pField.name), pField.field)
 										}
 									}
 								}
@@ -692,7 +697,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 							for _, relField := range relModelInfo.fields {
 								if isPkField(relField) {
 									conditions = append(conditions, fmt.Sprintf(
-										"%s.%s = %s.%s", modelInfo.table, field.column, ci.RelationInfo.Table, relField.reference.column))
+										"%s.%s = %s.%s", modelInfo.table, field.column, ci.RelationInfo.Table, field.reference.column))
 									for _, sm := range slice {
 										// add where conditions
 										val, err := getModelValue(sm)
@@ -704,7 +709,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 											return errors.Wrap(err, "can't get related model primary fields")
 										}
 										for _, pField := range pFields {
-											addWhereClause(opts, fmt.Sprintf("%s.%s", ci.RelationInfo.Table, pField.relationName), pField.field.Interface())
+											addWhereClause(opts, fmt.Sprintf("%s.%s", ci.RelationInfo.Table, pField.relationName), pField.field)
 										}
 									}
 								}
@@ -765,14 +770,23 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 	return loadRelationsForSlice(ctx, db, opts, slicePtr, colInfoPerEntry)
 }
 
-func addWhereClause(options *Options, s string, i interface{}) {
+func addWhereClause(options *Options, s string, value reflect.Value) {
 	if options == nil {
 		options = new(Options)
 	}
 	if options.Where == nil {
 		options.Where = make(Where)
 	}
-	options.Where[s] = i
+	switch value.Kind() {
+	case reflect.Int, reflect.Float64, reflect.Int64:
+		if isZeroField(value) {
+			options.Where[s] = nil
+		} else {
+			options.Where[s] = value.Interface()
+		}
+	default:
+		options.Where[s] = value.Interface()
+	}
 }
 
 // Delete removes model object from database by it's primary key

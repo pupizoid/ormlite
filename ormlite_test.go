@@ -961,13 +961,17 @@ func (s *testSearchByRelatedSuite) SetupSuite() {
 		Name: "Test 2", HasOne: &hasOneModel,
 		ManyToMany: []*testSearchMTMModel{{ID: 1}},
 	}))
+
+	require.NoError(s.T(), Upsert(db, &testSearchBaseModel{
+		Name: "Test 3", HasOne: &hasOneModel,
+	}))
 }
 
 func (s testSearchByRelatedSuite) TestScheme() {
 	var mm []*testSearchBaseModel
 	if assert.NoError(s.T(), QuerySlice(s.db, DefaultOptions(), &mm)) {
 		assert.NotNil(s.T(), mm)
-		assert.Len(s.T(), mm, 2)
+		assert.Len(s.T(), mm, 3)
 	}
 }
 
@@ -1012,8 +1016,8 @@ func (s *testSearchByRelatedSuite) TestSearchByManyToMany() {
 		assert.Len(s.T(), mm, 1)
 	}
 	mm = nil
-	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchMTMModel{ID: 0}}}, &mm)) {
-		assert.Len(s.T(), mm, 0)
+	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchMTMModel{}}}, &mm)) {
+		assert.Len(s.T(), mm, 1)
 	}
 }
 
