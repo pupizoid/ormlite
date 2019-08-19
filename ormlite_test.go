@@ -1019,6 +1019,11 @@ func (s *testSearchByRelatedSuite) TestSearchByManyToMany() {
 	if assert.NoError(s.T(), QuerySlice(s.db, &Options{RelatedTo: []IModel{&testSearchMTMModel{}}}, &mm)) {
 		assert.Len(s.T(), mm, 1)
 	}
+
+	count, err := Count(s.db, &testSearchBaseModel{}, &Options{RelatedTo: []IModel{&testSearchMTMModel{ID: 2}}})
+	if assert.NoError(s.T(), err) {
+		assert.EqualValues(s.T(), 1, count)
+	}
 }
 
 func TestSearchByRelated(t *testing.T) {

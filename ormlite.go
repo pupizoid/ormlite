@@ -565,9 +565,6 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 					searchModels[mt] = []Model{sm}
 				}
 			}
-			//for rInfo := range relations {
-			//	spew.Dump(rInfo)
-			//}
 		}
 		rows, err := queryWithOptions(ctx, db, out.Table(), columns, opts)
 		if err != nil {
@@ -840,18 +837,128 @@ type pkFieldInfo struct {
 	field        reflect.Value
 }
 
-func Count(db *sql.DB, m Model, opts *Options) (int64, error) {
+func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
+	mInfo, err := getModelInfo(m)
+	if err != nil {
+		return
+	}
+
 	var (
 		query   strings.Builder
 		args    []interface{}
 		divider string
-		count   int64
 	)
+
+	colInfo, err := getColumnInfo(mInfo.value.Type())
+	if err != nil {
+		return
+	}
+
+	if opts != nil && len(opts.RelatedTo) != 0 {
+		searchModels := map[reflect.Type][]Model{}
+		for _, sm := range opts.RelatedTo {
+			mt := reflect.TypeOf(sm)
+			if slice, ok := searchModels[mt]; ok {
+				slice = append(slice, sm)
+			} else {
+				searchModels[mt] = []Model{sm}
+			}
+		}
+		for _, ci := range colInfo {
+			if slice, ok := searchModels[ci.RelationInfo.RelatedType]; ok {
+				switch ci.RelationInfo.Type {
+				case hasMany:
+					modelStructType := ci.RelationInfo.RelatedType.Elem()
+					relModelInfo, err := getModelInfo(reflect.New(modelStructType).Interface().(IModel))
+					if err != nil {
+						return 0, err
+					}
+					var (
+						joinQuery  strings.Builder
+						conditions []string
+					)
+					for _, field := range mInfo.fields {
+						if isPkField(field) {
+							joinQuery.WriteString(" left join " + relModelInfo.table + " on ")
+							for _, relField := range relModelInfo.fields {
+								if mInfo.value.Addr().Type().AssignableTo(relField.value.Type()) {
+									conditions = append(conditions, fmt.Sprintf(
+										"%s.%s = %s.%s", mInfo.table, field.column, relModelInfo.table, relField.column))
+								}
+								if isPkField(relField) {
+									for _, sm := range slice {
+										// add where conditions
+										val, err := getModelValue(sm)
+										if err != nil {
+											return 0, err
+										}
+										pFields, err := getPrimaryFieldsInfo(val)
+										if err != nil {
+											return 0, err
+										}
+										for _, pField := range pFields {
+											addWhereClause(opts, fmt.Sprintf("%s.%s", relModelInfo.table, pField.name), pField.field)
+										}
+									}
+								}
+							}
+						}
+					}
+					if len(conditions) != 0 {
+						joinQuery.WriteString(strings.Join(conditions, OR))
+						opts.joins = append(opts.joins, joinQuery.String())
+					}
+				case manyToMany:
+					modelStructType := ci.RelationInfo.RelatedType.Elem()
+					relModelInfo, err := getModelInfo(reflect.New(modelStructType).Interface().(IModel))
+					if err != nil {
+						return 0, err
+					}
+					var (
+						joinQuery  strings.Builder
+						conditions []string
+					)
+					for _, field := range mInfo.fields {
+						if isPkField(field) {
+							joinQuery.WriteString(" left join " + ci.RelationInfo.Table + " on ")
+							for _, relField := range relModelInfo.fields {
+								if isPkField(relField) {
+									conditions = append(conditions, fmt.Sprintf(
+										"%s.%s = %s.%s", mInfo.table, field.column, ci.RelationInfo.Table, field.reference.column))
+									for _, sm := range slice {
+										// add where conditions
+										val, err := getModelValue(sm)
+										if err != nil {
+											return 0, err
+										}
+										pFields, err := getPrimaryFieldsInfo(val)
+										if err != nil {
+											return 0, err
+										}
+										for _, pField := range pFields {
+											addWhereClause(opts, fmt.Sprintf("%s.%s", ci.RelationInfo.Table, pField.relationName), pField.field)
+										}
+									}
+								}
+							}
+						}
+					}
+					if len(conditions) != 0 {
+						joinQuery.WriteString(strings.Join(conditions, OR))
+						opts.joins = append(opts.joins, joinQuery.String())
+					}
+				}
+			}
+		}
+	}
 
 	query.WriteString("select count() from ")
 	query.WriteString(m.Table())
 
 	if opts != nil {
+		if len(opts.joins) != 0 {
+			query.WriteString(strings.Join(opts.joins, " "))
+		}
 		if opts.Where != nil {
 			query.WriteString(" where ")
 			if len(opts.Where) > 1 && opts.Divider == "" {
