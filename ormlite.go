@@ -451,10 +451,19 @@ func loadManyToManyRelation(ctx context.Context, db *sql.DB, ri *relationInfo, r
 		return errors.New("can't load relations: related struct does not have primary key")
 	}
 
-	for _, pkField := range pkFields {
-		where = append(where, fmt.Sprintf("%s = ?", pkField.relationName))
-		args = append(args, pkField.field.Interface())
+	for i, pkField := range pkFields {
+		fNames := strings.Split(ri.FieldName, ",")
+		if ri.FieldName != "" {
+			if len(fNames) != len(pkFields) {
+				return errors.New("field count does not match count of primary fields")
+			}
+			where = append(where, fmt.Sprintf("%s = ?", fNames[i]))
+		} else {
+			where = append(where, fmt.Sprintf("%s = ?", pkField.relationName))
+		}
+		args = append(args, pkFields[0].field.Interface())
 	}
+
 	if ri.Condition != "" {
 		where = append(where, ri.Condition)
 	}

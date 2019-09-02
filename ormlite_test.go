@@ -1029,3 +1029,54 @@ func (s *testSearchByRelatedSuite) TestSearchByManyToMany() {
 func TestSearchByRelated(t *testing.T) {
 	suite.Run(t, new(testSearchByRelatedSuite))
 }
+
+type MTMModel struct {
+	ID       int64 `ormlite:"primary,ref=model_id"`
+	Name     string
+	Children []*MTMModel `ormlite:"many_to_many,table=rel_table,field=parent_id"`
+}
+
+func (*MTMModel) Table() string { return "mtm_model" }
+
+type testCustomFieldInMTMModel struct {
+	suite.Suite
+	db *sql.DB
+}
+
+func (s *testCustomFieldInMTMModel) SetupSuite() {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(s.T(), err)
+
+	_, err = db.Exec(`
+		create table mtm_model (id integer primary key, name text);
+		create table rel_table (parent_id integer, model_id integer);
+		
+		insert into mtm_model(name) values ('tst 1'), ('test 2'), ('test 3'), ('test 4');
+		insert into rel_table (parent_id, model_id) values (1,2), (1,3), (4,1);
+	`)
+	require.NoError(s.T(), err)
+	s.db = db
+}
+
+func (s *testCustomFieldInMTMModel) TearDownSuite() {
+	require.NoError(s.T(), s.db.Close())
+}
+
+func (s *testCustomFieldInMTMModel) TestParenthesis() {
+	var mm []*MTMModel
+	require.NoError(s.T(), QuerySlice(s.db, &Options{RelationDepth: 1, Where: Where{"id": 1}}, &mm))
+
+	if assert.Len(s.T(), mm, 1) {
+		assert.Len(s.T(), mm[0].Children, 2)
+	}
+
+	mm = nil
+	require.NoError(s.T(), QuerySlice(s.db, &Options{RelationDepth: 1, Where: Where{"id": 4}}, &mm))
+	if assert.Len(s.T(), mm, 1) {
+		assert.Len(s.T(), mm[0].Children, 1)
+	}
+}
+
+func TestCustomFieldInMTM(t *testing.T) {
+	suite.Run(t, new(testCustomFieldInMTMModel))
+}
