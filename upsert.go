@@ -457,3 +457,12 @@ func IsUniqueViolation(err error) bool {
 func IsNotFound(err error) bool {
 	return err == ErrNoRowsAffected
 }
+
+func IsFKError(err error) bool {
+	if e, ok := err.(*Error); ok {
+		if inner, ok := e.SQLError.(sqlite3.Error); ok {
+			return inner.Code == sqlite3.ErrConstraint && inner.ExtendedCode == sqlite3.ErrConstraintForeignKey
+		}
+	}
+	return false
+}

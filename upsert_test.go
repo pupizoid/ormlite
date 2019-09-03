@@ -313,3 +313,24 @@ func (s *skipUpdatingExistingRelatedModels) Test() {
 func TestSkipUpdatingExistingModels(t *testing.T) {
 	suite.Run(t, new(skipUpdatingExistingRelatedModels))
 }
+
+func TestFKErrorCheck(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		create table test(id integer primary key, name text);
+		create table related(test_id integer references test (id) on delete cascade);
+	`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`insert into related(test_id) values (1)`)
+	if assert.Error(t, err) {
+		assert.True(t, IsFKError(&Error{
+			SQLError: err,
+			Query:    "",
+			Args:     nil,
+		}))
+		assert.False(t, IsFKError(err))
+	}
+}
