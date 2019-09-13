@@ -334,3 +334,20 @@ func TestFKErrorCheck(t *testing.T) {
 		assert.False(t, IsFKError(err))
 	}
 }
+
+func TestNotNullErrorCheck(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`create table test(id integer primary key, name text not null);`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`insert into test(name) values (null)`)
+	if assert.Error(t, err) {
+		assert.True(t, IsNotNullError(&Error{
+			SQLError: err,
+		}))
+		assert.False(t, IsNotNullError(err))
+	}
+
+}
