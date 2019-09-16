@@ -234,22 +234,25 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 			var keys []string
 			for k, v := range opts.Where {
 				if v != nil {
-					switch reflect.TypeOf(v).Kind() {
+					value := reflect.ValueOf(v)
+					switch value.Kind() {
 					case reflect.Slice:
 						if strings.Contains(k, ",") {
 							rowValueCount := len(strings.Split(k, ","))
-							for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
+							for i := 0; i < value.Len()/rowValueCount; i++ {
 								keys = append(keys, fmt.Sprintf("(%s) = (%s)", k, strings.Trim(strings.Repeat("?,", rowValueCount), ",")))
 							}
 							opts.Divider = OR
 						} else {
-							count := len(v.([]interface{}))
+							count := value.Len()
 							if opts.Limit != 0 && opts.Limit < count {
 								count = opts.Limit
 							}
 							keys = append(keys, fmt.Sprintf("%s in (%s)", k, strings.Trim(strings.Repeat("?,", count), ",")))
 						}
-						values = append(values, v.([]interface{})...)
+						for i := 0; i < value.Len(); i++ {
+							values = append(values, value.Index(i).Interface())
+						}
 					case reflect.String:
 						keys = append(keys, fmt.Sprintf("%s like ?", k))
 						values = append(values, fmt.Sprintf("%%%s%%", v))
