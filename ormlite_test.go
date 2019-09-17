@@ -1080,3 +1080,48 @@ func (s *testCustomFieldInMTMModel) TestParenthesis() {
 func TestCustomFieldInMTM(t *testing.T) {
 	suite.Run(t, new(testCustomFieldInMTMModel))
 }
+
+type testOperatorsModel struct {
+	ID     int64 `ormlite:"primary"`
+	Number int
+}
+
+func (m *testOperatorsModel) Table() string { return "test" }
+
+func TestGreaterOrLessOperator(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		create table test(id integer primary key, number integer);
+		insert into test(number) values (1), (2), (3), (4), (5);
+	`)
+	require.NoError(t, err)
+
+	var mm []*testOperatorsModel
+	if assert.NoError(t, QuerySlice(db, &Options{Where: Where{"number": Greater(4)}}, &mm)) {
+		if assert.Len(t, mm, 1) {
+			assert.EqualValues(t, 5, mm[0].ID)
+		}
+	}
+
+	mm = nil
+	if assert.NoError(t, QuerySlice(db, &Options{Where: Where{"number": Less(3)}}, &mm)) {
+		assert.Len(t, mm, 2)
+	}
+
+	mm = nil
+	if assert.NoError(t, QuerySlice(db, &Options{Where: Where{"number": GreaterOrEqual(3)}}, &mm)) {
+		assert.Len(t, mm, 3)
+	}
+
+	mm = nil
+	if assert.NoError(t, QuerySlice(db, &Options{Where: Where{"number": LessOrEqual(2)}}, &mm)) {
+		assert.Len(t, mm, 2)
+	}
+
+	mm = nil
+	if assert.NoError(t, QuerySlice(db, &Options{Where: Where{"number": NotEqual(3)}}, &mm)) {
+		assert.Len(t, mm, 4)
+	}
+}

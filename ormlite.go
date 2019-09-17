@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"reflect"
 	"strings"
 	"time"
@@ -48,6 +49,16 @@ type OrderBy struct {
 
 // Where is a map containing fields and their values to meet in the result
 type Where map[string]interface{}
+
+type Greater float64
+
+type Less float64
+
+type GreaterOrEqual float64
+
+type LessOrEqual float64
+
+type NotEqual float64
 
 const (
 	// AND is a glue between multiple statements after `where`
@@ -257,7 +268,21 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 						keys = append(keys, fmt.Sprintf("%s like ?", k))
 						values = append(values, fmt.Sprintf("%%%s%%", v))
 					default:
-						keys = append(keys, fmt.Sprintf("%s = ?", k))
+						spew.Dump(v)
+						switch v.(type) {
+						case Greater:
+							keys = append(keys, fmt.Sprintf("%s > ?", k))
+						case GreaterOrEqual:
+							keys = append(keys, fmt.Sprintf("%s >= ?", k))
+						case Less:
+							keys = append(keys, fmt.Sprintf("%s < ?", k))
+						case LessOrEqual:
+							keys = append(keys, fmt.Sprintf("%s <= ?", k))
+						case NotEqual:
+							keys = append(keys, fmt.Sprintf("%s != ?", k))
+						default:
+							keys = append(keys, fmt.Sprintf("%s = ?", k))
+						}
 						values = append(values, v)
 					}
 				} else {
