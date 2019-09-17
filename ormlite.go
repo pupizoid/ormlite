@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"reflect"
 	"strings"
 	"time"
@@ -268,7 +267,6 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 						keys = append(keys, fmt.Sprintf("%s like ?", k))
 						values = append(values, fmt.Sprintf("%%%s%%", v))
 					default:
-						spew.Dump(v)
 						switch v.(type) {
 						case Greater:
 							keys = append(keys, fmt.Sprintf("%s > ?", k))
@@ -287,7 +285,6 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 					}
 				} else {
 					keys = append(keys, fmt.Sprintf("%s is null", k))
-					//values = append(values, v)
 				}
 			}
 			if len(keys) > 0 {
@@ -1024,7 +1021,20 @@ func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 						query.WriteString(f + " like ?" + divider)
 						args = append(args, fmt.Sprintf("%%%s%%", v))
 					default:
-						query.WriteString(f + " = ?" + divider)
+						switch v.(type) {
+						case Greater:
+							query.WriteString(f + " > ?" + divider)
+						case GreaterOrEqual:
+							query.WriteString(f + " >= ?" + divider)
+						case Less:
+							query.WriteString(f + " < ?" + divider)
+						case LessOrEqual:
+							query.WriteString(f + " <= ?" + divider)
+						case NotEqual:
+							query.WriteString(f + " != ?" + divider)
+						default:
+							query.WriteString(f + " = ?" + divider)
+						}
 						args = append(args, v)
 					}
 				} else {
