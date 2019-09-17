@@ -1001,22 +1001,25 @@ func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 			divider = opts.Divider
 			for f, v := range opts.Where {
 				if v != nil {
-					switch reflect.TypeOf(v).Kind() {
+					value := reflect.ValueOf(v)
+					switch value.Kind() {
 					case reflect.Slice:
 						if strings.Contains(f, ",") {
 							rowValueCount := len(strings.Split(f, ","))
-							for i := 0; i < len(v.([]interface{}))/rowValueCount; i++ {
+							for i := 0; i < value.Len()/rowValueCount; i++ {
 								query.WriteString("(" + f + ") = (" + strings.Trim(strings.Repeat("?,", rowValueCount), ",") + ")" + divider)
 							}
 							opts.Divider = OR
 						} else {
-							count := len(v.([]interface{}))
+							count := value.Len()
 							if opts.Limit != 0 && opts.Limit < count {
 								count = opts.Limit
 							}
 							query.WriteString(f + " in (" + strings.Trim(strings.Repeat("?,", count), ",") + ")" + divider)
 						}
-						args = append(args, v.([]interface{})...)
+						for i := 0; i < value.Len(); i++ {
+							args = append(args, value.Index(i).Interface())
+						}
 					case reflect.String:
 						query.WriteString(f + " like ?" + divider)
 						args = append(args, fmt.Sprintf("%%%s%%", v))
