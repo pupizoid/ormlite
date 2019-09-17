@@ -993,7 +993,7 @@ func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 		if len(opts.joins) != 0 {
 			query.WriteString(strings.Join(opts.joins, " "))
 		}
-		if opts.Where != nil {
+		if opts.Where != nil && len(opts.Where) > 0 {
 			query.WriteString(" where ")
 			if len(opts.Where) > 1 && opts.Divider == "" {
 				return 0, errors.New("empty divider with multiple conditions")
