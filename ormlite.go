@@ -59,6 +59,10 @@ type LessOrEqual float64
 
 type NotEqual float64
 
+type BitwiseAND float64
+
+type BitwiseANDStrict float64
+
 const (
 	// AND is a glue between multiple statements after `where`
 	AND = " and "
@@ -278,6 +282,11 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 							keys = append(keys, fmt.Sprintf("%s <= ?", k))
 						case NotEqual:
 							keys = append(keys, fmt.Sprintf("%s != ?", k))
+						case BitwiseAND:
+							keys = append(keys, fmt.Sprintf("%s&? > 0", k))
+						case BitwiseANDStrict:
+							keys = append(keys, fmt.Sprintf("%s&? = ?", k))
+							values = append(values, v)
 						default:
 							keys = append(keys, fmt.Sprintf("%s = ?", k))
 						}
@@ -1035,6 +1044,11 @@ func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 							query.WriteString(f + " <= ?" + divider)
 						case NotEqual:
 							query.WriteString(f + " != ?" + divider)
+						case BitwiseAND:
+							query.WriteString(f + "&? > 0" + divider)
+						case BitwiseANDStrict:
+							query.WriteString(f + "&? = ?" + divider)
+							args = append(args, v)
 						default:
 							query.WriteString(f + " = ?" + divider)
 						}

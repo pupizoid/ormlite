@@ -1125,3 +1125,44 @@ func TestGreaterOrLessOperator(t *testing.T) {
 		assert.Len(t, mm, 4)
 	}
 }
+
+func TestBitwiseQuerying(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		create table test(id integer primary key, number integer);
+		insert into test(number) values (108);
+	`)
+	require.NoError(t, err)
+
+	var m testOperatorsModel
+	if assert.NoError(t, QueryStruct(db, &Options{Where: Where{"number": BitwiseAND(30)}}, &m)) {
+		assert.EqualValues(t, 1, m.ID)
+	}
+
+	var m1 testOperatorsModel
+	if assert.NoError(t, QueryStruct(db, &Options{Where: Where{"number": BitwiseANDStrict(30)}}, &m1)) {
+		assert.EqualValues(t, 0, m1.ID)
+	}
+
+	var m2 testOperatorsModel
+	if assert.NoError(t, QueryStruct(db, &Options{Where: Where{"number": BitwiseANDStrict(40)}}, &m2)) {
+		assert.EqualValues(t, 1, m2.ID)
+	}
+
+	count, err := Count(db, &testOperatorsModel{}, &Options{Where: Where{"number": BitwiseAND(30)}})
+	if assert.NoError(t, err) {
+		assert.EqualValues(t, 1, count)
+	}
+
+	count, err = Count(db, &testOperatorsModel{}, &Options{Where: Where{"number": BitwiseANDStrict(30)}})
+	if assert.NoError(t, err) {
+		assert.EqualValues(t, 0, count)
+	}
+
+	count, err = Count(db, &testOperatorsModel{}, &Options{Where: Where{"number": BitwiseANDStrict(40)}})
+	if assert.NoError(t, err) {
+		assert.EqualValues(t, 1, count)
+	}
+}
