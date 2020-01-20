@@ -207,7 +207,7 @@ func (ins *inserter) syncRelations(ctx context.Context, db *sql.DB, info *modelI
 	ins.depth++
 
 	for _, field := range info.fields {
-		if isManyToMany(field) {
+		if isManyToMany(field) && !field.reference.view {
 			if err := ins.syncManyToManyRelation(ctx, db, field, info); err != nil {
 				return err
 			}

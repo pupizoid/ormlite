@@ -73,6 +73,7 @@ type fieldReference struct {
 	table     string
 	condition string
 	column    string
+	view      bool // flag that related data comes from view, so no sync is required
 }
 
 type modelField struct {
@@ -145,6 +146,9 @@ func getFieldInfo(mValue reflect.Value, fIndex int) (modelField, error) {
 		mField.reference.table = lookForSetting(tag, "table")
 		mField.reference.condition = lookForSettingWithSep(tag, "condition", ":")
 		mField.Type += referenceField
+		if lookForSetting(tag, "view") != "" {
+			mField.reference.view = true
+		}
 	case lookForSetting(tag, "has_many") != "":
 		mField.reference.Type = "has_many"
 		mField.Type += referenceField
