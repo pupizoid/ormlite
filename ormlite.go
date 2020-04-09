@@ -63,6 +63,8 @@ type BitwiseAND float64
 
 type BitwiseANDStrict float64
 
+type StrictString string
+
 const (
 	// AND is a glue between multiple statements after `where`
 	AND = " and "
@@ -221,10 +223,6 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 		info.Type = manyToMany
 		info.RelatedType = field.Type.Elem()
 		tOption := lookForSetting(t, "table")
-		//if strings.Contains(tOption, "(") {
-		//	info.Condition = tOption[strings.Index(tOption, "(")+1 : strings.Index(tOption, ")")]
-		//	tOption = tOption[:strings.Index(tOption, "(")]
-		//}
 		info.Condition = lookForSettingWithSep(t, "condition", ":")
 		info.Table = tOption
 		info.FieldName = lookForSetting(t, "field")
@@ -286,7 +284,8 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 							keys = append(keys, fmt.Sprintf("%s&? > 0", k))
 						case BitwiseANDStrict:
 							keys = append(keys, fmt.Sprintf("%s&? = ?", k))
-							values = append(values, v)
+						case StrictString:
+							keys = append(keys, fmt.Sprintf("%s = ?", k))
 						default:
 							keys = append(keys, fmt.Sprintf("%s = ?", k))
 						}
