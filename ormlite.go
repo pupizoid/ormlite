@@ -266,8 +266,14 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 							values = append(values, value.Index(i).Interface())
 						}
 					case reflect.String:
-						keys = append(keys, fmt.Sprintf("%s like ?", k))
-						values = append(values, fmt.Sprintf("%%%s%%", v))
+						switch v.(type) {
+						case StrictString:
+							keys = append(keys, fmt.Sprintf("%s = ?", k))
+							values = append(values, v)
+						default:
+							keys = append(keys, fmt.Sprintf("%s like ?", k))
+							values = append(values, fmt.Sprintf("%%%s%%", v))
+						}
 					default:
 						switch v.(type) {
 						case Greater:
@@ -285,8 +291,6 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 						case BitwiseANDStrict:
 							keys = append(keys, fmt.Sprintf("%s&? = ?", k))
 							values = append(values, v)
-						case StrictString:
-							keys = append(keys, fmt.Sprintf("%s = ?", k))
 						default:
 							keys = append(keys, fmt.Sprintf("%s = ?", k))
 						}
@@ -1030,8 +1034,14 @@ func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 							args = append(args, value.Index(i).Interface())
 						}
 					case reflect.String:
-						query.WriteString(f + " like ?" + divider)
-						args = append(args, fmt.Sprintf("%%%s%%", v))
+						switch v.(type) {
+						case StrictString:
+							query.WriteString(f + " = ?" + divider)
+							args = append(args, v)
+						default:
+							query.WriteString(f + " like ?" + divider)
+							args = append(args, fmt.Sprintf("%%%s%%", v))
+						}
 					default:
 						switch v.(type) {
 						case Greater:

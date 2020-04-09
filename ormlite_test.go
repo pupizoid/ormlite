@@ -1166,3 +1166,42 @@ func TestBitwiseQuerying(t *testing.T) {
 		assert.EqualValues(t, 1, count)
 	}
 }
+
+type testStrictStringQueryingModel struct {
+	ID   int64 `ormlite:"primary"`
+	Name string
+}
+
+func (*testStrictStringQueryingModel) Table() string { return "test" }
+
+func TestStrictStringQuering(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		create table test(id integer primary key, name text);
+		insert into test(name) values ('support');
+		insert into test(name) values ('subsupport');
+	`)
+	require.NoError(t, err)
+
+	var m testStrictStringQueryingModel
+	if assert.NoError(t, QueryStruct(db, &Options{Where: Where{"name": "support"}}, &m)) {
+		assert.EqualValues(t, "subsupport", m.Name)
+	}
+
+	var m1 testStrictStringQueryingModel
+	if assert.NoError(t, QueryStruct(db, &Options{Where: Where{"name": StrictString("support")}}, &m1)) {
+		assert.EqualValues(t, "support", m1.Name)
+	}
+
+	count, err := Count(db, &testStrictStringQueryingModel{}, &Options{Where: Where{"name": "support"}})
+	if assert.NoError(t, err) {
+		assert.EqualValues(t, 2, count)
+	}
+
+	count, err = Count(db, &testStrictStringQueryingModel{}, &Options{Where: Where{"name": StrictString("support")}})
+	if assert.NoError(t, err) {
+		assert.EqualValues(t, 1, count)
+	}
+}
