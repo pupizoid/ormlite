@@ -284,6 +284,7 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 							keys = append(keys, fmt.Sprintf("%s&? > 0", k))
 						case BitwiseANDStrict:
 							keys = append(keys, fmt.Sprintf("%s&? = ?", k))
+							values = append(values, v)
 						case StrictString:
 							keys = append(keys, fmt.Sprintf("%s = ?", k))
 						default:
