@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -313,6 +314,10 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 				q += fmt.Sprintf(" offset %d", opts.Offset)
 			}
 		}
+	}
+	if os.Getenv("ORMLITE_DEBUG") == "1" {
+		fmt.Println(q)
+		fmt.Println(values)
 	}
 	rows, err := db.QueryContext(ctx, q, values...)
 	if err != nil {
