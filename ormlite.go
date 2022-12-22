@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math/rand"
 	"os"
 	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pkg/errors"
 )
@@ -24,11 +26,19 @@ const (
 	hasMany
 	hasOne
 	manyToMany
+
+	letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+	letterIdxBits       = 6                    // 6 bits to represent a letter index
+	letterIdxMask       = 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
+	letterIdxMax        = 63 / letterIdxBits   // # of letter indices fitting in 63 bits
+	tempTableNameLength = 2 << 2
 )
 
 var (
 	// ErrNoRowsAffected is an error to return when no rows were affected
 	ErrNoRowsAffected = errors.New("no rows affected")
+	src               = rand.NewSource(time.Now().UnixNano())
 )
 
 // Error is a custom struct that contains sql error, query and arguments
@@ -156,6 +166,24 @@ func lookForSettingWithSep(s, setting, sep string) string {
 	return ""
 }
 
+func getTempTableName(n int) string {
+	b := make([]byte, n)
+	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
+	for i, cache, remain := n-1, src.Int63(), letterIdxMax; i >= 0; {
+		if remain == 0 {
+			cache, remain = src.Int63(), letterIdxMax
+		}
+		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
+			b[i] = letterBytes[idx]
+			i--
+		}
+		cache >>= letterIdxBits
+		remain--
+	}
+
+	return *(*string)(unsafe.Pointer(&b))
+}
+
 func lookForSetting(s, setting string) string {
 	return lookForSettingWithSep(s, setting, "=")
 }
@@ -236,9 +264,16 @@ func extractRelationInfo(field reflect.StructField) *relationInfo {
 	return &info
 }
 
-func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []string, opts *Options) (*sql.Rows, error) {
-	var values []interface{}
-	q := fmt.Sprintf("select %s from %s", strings.Join(columns, ","), table)
+func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []string, opts *Options, count *int) (*sql.Rows, error) {
+	var (
+		values    []interface{}
+		q         string
+		tableName = getTempTableName(tempTableNameLength)
+	)
+	q = fmt.Sprintf("select %s from %s", strings.Join(columns, ","), table)
+	if count != nil {
+		q = fmt.Sprintf("create temp table %s as ", tableName) + q
+	}
 	if opts != nil {
 		if len(opts.joins) != 0 {
 			q += strings.Join(opts.joins, " ")
@@ -318,6 +353,22 @@ func queryWithOptions(ctx context.Context, db *sql.DB, table string, columns []s
 	if os.Getenv("ORMLITE_DEBUG") == "1" {
 		fmt.Println(q)
 		fmt.Println(values)
+	}
+	if count != nil {
+		_, err := db.Exec(q, values...)
+		if err != nil {
+			return nil, &Error{errors.Wrap(err, "failed to get rows count from temp table"), q, []any{tableName}}
+		}
+		row := db.QueryRow(fmt.Sprintf("select count() from %s", tableName))
+		if err := row.Scan(count); err != nil {
+			return nil, &Error{errors.Wrap(err, "failed to execute count on a temp table"), "", []any{tableName}}
+		}
+		for i, colName := range columns {
+			if strings.HasPrefix(colName, table) {
+				columns[i] = colName[len(table)+1:]
+			}
+		}
+		q = fmt.Sprintf("select %s from %s", strings.Join(columns, ","), tableName)
 	}
 	rows, err := db.QueryContext(ctx, q, values...)
 	if err != nil {
@@ -618,7 +669,7 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 				}
 			}
 		}
-		rows, err := queryWithOptions(ctx, db, out.Table(), columns, opts)
+		rows, err := queryWithOptions(ctx, db, out.Table(), columns, opts, nil)
 		if err != nil {
 			return err
 		}
@@ -641,8 +692,18 @@ func QuerySlice(db *sql.DB, opts *Options, out interface{}) error {
 	return QuerySliceContext(ctx, db, opts, out)
 }
 
+// QuerySliceCount scans rows into the slice of structs also returning count of matched rows
+func QuerySliceCount(db *sql.DB, opts *Options, out any, count *int) error {
+	return QuerySliceCountContext(context.Background(), db, opts, out, count)
+}
+
 // QuerySliceContext scans rows into the slice of structs with given context
-func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out interface{}) error {
+func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out any) error {
+	return QuerySliceCountContext(ctx, db, opts, out, nil)
+}
+
+// QuerySliceCountContext scans rows into the slice of structs with given context and also returning count of matched rows
+func QuerySliceCountContext(ctx context.Context, db *sql.DB, opts *Options, out any, count *int) error {
 
 	slicePtr := reflect.ValueOf(out).Elem()
 	if !slicePtr.Type().Elem().Implements(reflect.TypeOf((*Model)(nil)).Elem()) {
@@ -775,7 +836,7 @@ func QuerySliceContext(ctx context.Context, db *sql.DB, opts *Options, out inter
 	}
 
 	rows, err := queryWithOptions(
-		ctx, db, reflect.New(modelType).Interface().(Model).Table(), colNames, opts)
+		ctx, db, reflect.New(modelType).Interface().(Model).Table(), colNames, opts, count)
 	if err != nil {
 		return err
 	}
