@@ -1174,7 +1174,7 @@ type testStrictStringQueryingModel struct {
 
 func (*testStrictStringQueryingModel) Table() string { return "test" }
 
-func TestStrictStringQuering(t *testing.T) {
+func TestStrictStringQuerying(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:?_fk=1")
 	require.NoError(t, err)
 
@@ -1203,5 +1203,39 @@ func TestStrictStringQuering(t *testing.T) {
 	count, err = Count(db, &testStrictStringQueryingModel{}, &Options{Where: Where{"name": StrictString("support")}})
 	if assert.NoError(t, err) {
 		assert.EqualValues(t, 1, count)
+	}
+}
+
+type testQuerySliceCountModel struct {
+	ID   int64 `ormlite:"primary"`
+	Attr int
+}
+
+func (*testQuerySliceCountModel) Table() string { return "test" }
+
+func TestQuerySliceCount(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		create table test(id integer primary key , attr int);
+		insert into test(attr) values (1);
+		insert into test(attr) values (1);
+		insert into test(attr) values (1);
+		insert into test(attr) values (1);
+		insert into test(attr) values (2);
+		insert into test(attr) values (2);
+		insert into test(attr) values (2);
+		insert into test(attr) values (2);
+		insert into test(attr) values (2);
+		insert into test(attr) values (2);
+	`)
+	require.NoError(t, err)
+
+	var m []*testQuerySliceCountModel
+	var count int
+	if assert.NoError(t, QuerySliceCount(db, &Options{Where: Where{"attr": 1}}, &m, &count)) {
+		assert.Len(t, m, 4)
+		assert.EqualValues(t, 4, count)
 	}
 }
