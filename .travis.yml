@@ -1,4 +1,8 @@
+os: osx
 language: go
 sudo: false
 go:
- - "1.19"
+  - tip
+script:
+ - go test -v
+ - go build
