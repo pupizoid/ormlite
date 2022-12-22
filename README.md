@@ -1,8 +1,7 @@
 # ormlite
 Lightweight package implementing some ORM-like features and helpers for sqlite databases.
 
-[![Build Status](https://travis-ci.org/pupizoid/ormlite.svg?branch=master)](https://travis-ci.org/pupizoid/ormlite)
-[![Coverage](https://gocover.io/_badge/github.com/pupizoid/ormlite)](https://gocover.io/github.com/pupizoid/ormlite)
+[![Build Status](https://app.travis-ci.com/pupizoid/ormlite.svg?branch=master)](https://app.travis-ci.com/pupizoid/ormlite)
 [![GoDoc](https://godoc.org/github.com/pupizoid/ormlite?status.svg)](https://godoc.org/github.com/pupizoid/ormlite)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pupizoid/ormlite)](https://goreportcard.com/report/github.com/pupizoid/ormlite)
 [![Awesome](https://cdn.rawgit.com/sindresorhus/awesome/d7305f38d29fed78fa85652e3a63e154dd8e8829/media/badge.svg)](https://github.com/avelino/awesome-go)
