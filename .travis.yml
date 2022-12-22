@@ -2,7 +2,7 @@ os: osx
 language: go
 sudo: false
 go:
-  - tip
+- master
 script:
  - go test -v
  - go build
