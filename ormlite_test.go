@@ -1237,5 +1237,85 @@ func TestQuerySliceCount(t *testing.T) {
 	if assert.NoError(t, QuerySliceCount(db, &Options{Where: Where{"attr": 1}}, &m, &count)) {
 		assert.Len(t, m, 4)
 		assert.EqualValues(t, 4, count)
+		assert.EqualValues(t, 4, m[3].ID)
 	}
+}
+
+type SelectedColumnsSuite struct {
+	suite.Suite
+	db *sql.DB
+}
+
+type BigModel struct {
+	ID      int           `ormlite:"primary"`
+	Attr1   int           `ormlite:"col=attr1"`
+	Attr2   int           `ormlite:"col=attr2"`
+	Attr3   string        `ormlite:"col=attr3"`
+	Attr4   float64       `ormlite:"col=attr4"`
+	Related *relatedModel `ormlite:"has_one,col=rel_id"`
+}
+
+func (b BigModel) Table() string { return "big_model" }
+
+func (s *SelectedColumnsSuite) SetupSuite() {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(s.T(), err)
+
+	_, err = db.Exec("create table big_model(id integer primary key, attr1 int, attr2 int, attr3 string, attr4 float, rel_id int);" +
+		"create table related_model(id integer primary key, field text);")
+	require.NoError(s.T(), err)
+	s.db = db
+
+	require.NoError(s.T(), Insert(db, &BigModel{Attr1: 1, Attr2: 2, Attr3: "first", Attr4: 1.0}))
+	require.NoError(s.T(), Insert(db, &BigModel{Attr1: 3, Attr2: 4, Attr3: "second", Attr4: 2.0}))
+	require.NoError(s.T(), Insert(db, &BigModel{Attr1: 5, Attr2: 6, Attr3: "third", Attr4: 3.0}))
+	require.NoError(s.T(), Insert(db, &BigModel{Attr1: 7, Attr2: 8, Attr3: "forth", Attr4: 4.0}))
+	require.NoError(s.T(), Insert(db, &BigModel{Attr1: 9, Attr2: 10, Attr3: "fifth", Attr4: 5.0}))
+
+	require.NoError(s.T(), Upsert(db, &BigModel{
+		Attr1:   11,
+		Attr2:   11,
+		Attr3:   "11",
+		Attr4:   11,
+		Related: &relatedModel{Field: "Hello"},
+	}))
+}
+
+func (s *SelectedColumnsSuite) TearDownSuite() {
+	require.NoError(s.T(), s.db.Close())
+}
+
+func (s *SelectedColumnsSuite) TestQueryStruct() {
+	var m BigModel
+	require.NoError(s.T(), QueryStruct(s.db, &Options{Columns: map[string]struct{}{
+		"attr1": {},
+		"attr3": {},
+	}, Where: Where{"id": 1}}, &m))
+
+	assert.EqualValues(s.T(), 1, m.ID)
+	assert.EqualValues(s.T(), 1, m.Attr1)
+	assert.EqualValues(s.T(), 0, m.Attr2)
+	assert.EqualValues(s.T(), "first", m.Attr3)
+	assert.EqualValues(s.T(), 0.0, m.Attr4)
+}
+
+func (s *SelectedColumnsSuite) TestQuerySlice() {
+	var mm []*BigModel
+	require.NoError(s.T(), QuerySlice(s.db, &Options{Columns: map[string]struct{}{
+		"attr2": {},
+		"attr4": {},
+	}}, &mm))
+
+	if assert.NotNil(s.T(), mm) {
+		assert.Len(s.T(), mm, 6)
+		assert.EqualValues(s.T(), 6, mm[2].Attr2)
+		assert.EqualValues(s.T(), "", mm[2].Attr3)
+		assert.EqualValues(s.T(), 3.0, mm[2].Attr4)
+		assert.EqualValues(s.T(), (*relatedModel)(nil), mm[5].Related)
+	}
+
+}
+
+func TestSelectedColumns(t *testing.T) {
+	suite.Run(t, new(SelectedColumnsSuite))
 }

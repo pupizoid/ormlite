@@ -92,7 +92,10 @@ type Options struct {
 	OrderBy       *OrderBy `json:"order_by"`
 	RelationDepth int      `json:"relation_depth"`
 	RelatedTo     []IModel `json:"related"`
-	joins         []string
+	// Columns contains map with string keys of columns to include to the query
+	// instead of querying all model fields
+	Columns map[string]struct{} `json:"columns"`
+	joins   []string
 }
 
 // DefaultOptions returns default options for query
@@ -150,7 +153,7 @@ type columnInfo struct {
 }
 
 func isExportedField(f reflect.StructField) bool {
-	return strings.ToLower(string([]rune(f.Name)[0])) != string([]rune(f.Name)[0])
+	return f.IsExported()
 }
 
 func lookForSettingWithSep(s, setting, sep string) string {
@@ -637,6 +640,18 @@ func QueryStructContext(ctx context.Context, db *sql.DB, opts *Options, out Mode
 			continue
 		}
 
+		if opts != nil && opts.Columns != nil {
+			var colName string
+			if exp, ok := model.Field(i).Interface().(Expression); ok {
+				colName = exp.Column()
+			} else {
+				colName = getFieldColumnName(model.Type().Field(i))
+			}
+			if _, ok := opts.Columns[colName]; !ok && !strings.Contains(tag, "primary") {
+				continue
+			}
+		}
+
 		if ri := extractRelationInfo(model.Type().Field(i)); ri != nil {
 			if ri.Type == hasOne {
 				columns = append(columns, getFieldColumnName(model.Type().Field(i)))
@@ -725,6 +740,16 @@ func QuerySliceCountContext(ctx context.Context, db *sql.DB, opts *Options, out 
 	colInfo, err := getColumnInfo(modelType)
 	if err != nil {
 		return fmt.Errorf("failed to get column info for type: %v", modelType)
+	}
+
+	if opts != nil && opts.Columns != nil {
+		var selected []columnInfo
+		for _, ci := range colInfo {
+			if _, ok := opts.Columns[ci.Name]; ok || ci.Primary {
+				selected = append(selected, ci)
+			}
+		}
+		colInfo = selected
 	}
 
 	for _, ci := range colInfo {
@@ -899,7 +924,7 @@ func addWhereClause(options *Options, s string, value reflect.Value) {
 	}
 }
 
-// Delete removes model object from database by it's primary key
+// Delete removes model object from database by its primary key
 func Delete(db *sql.DB, m Model) (sql.Result, error) {
 	modelValue := reflect.ValueOf(m).Elem()
 
@@ -950,6 +975,7 @@ type pkFieldInfo struct {
 	field        reflect.Value
 }
 
+// Count models in database with search options
 func Count(db *sql.DB, m Model, opts *Options) (count int64, err error) {
 	mInfo, err := getModelInfo(m)
 	if err != nil {
