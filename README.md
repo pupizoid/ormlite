@@ -228,7 +228,7 @@ Plane authors: Pete
 ```
 ### Comparison operators
 
-This package supports different comparison operators, such as:
+By default package use `=` operator to compare values introduced in `Where` struct, except strings, they are compared by `LIKE` operator. But there is a list of other operators that you can use:
 
 - `Greater` stands for `>`
 - `GreaterOrEqual` stands for `>=`
