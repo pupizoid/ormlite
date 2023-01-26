@@ -124,7 +124,7 @@ type Model struct {
 }
 ```
 
-`many_to_many` indicates that field represents many to many relation.
+`many_to_many` indicates that field represents many-to-many relation.
 
 `table(additional condition)` should contain mapping table name to retrieve relation information. If it's necessary to map entities with additional conditions you can specify sql describing them in brackets. For now only one additional field is supported.
 
@@ -132,6 +132,119 @@ type Model struct {
 
 Also there is a requirement to related model primary key field to contain `ref` setting that specifies column name of it's foreign key in mapping table.
 
-### Examples
+### Search by related
+
+Sometimes it's useful to search many-to-many model by related ones, so running the following code
+
+```go
+type Author struct {
+    Id     int      `ormlite:"primary,ref=author_id"`
+    Topics []*Topic `ormlite:"many_to_many,table=author_topics,field=author_id"`
+    Name   string
+}
+
+func (a *Author) Table() string { return "authors" }
+
+type Topic struct {
+    Id      int       `ormlite:"primary,ref=topic_id"`
+    Authors []*Author `ormlite:"many_to_many,table=author_topics,field=topic_id"`
+    Content string
+}
+
+func (p *Topic) Table() string { return "topics" }
+
+func main() {
+    db, err := sql.Open("sqlite3", ":memory:?_fk=1")
+    if err != nil {
+        panic(err)
+    }
+
+    _, err = db.Exec(`
+       create table authors(id integer primary key, name text);
+       create table topics(id integer primary key, content text, author_id int);
+       create table author_topics(author_id integer, topic_id integer);
+    `)
+    if err != nil {
+        panic(err)
+    }
+
+    john := &Author{Name: "John"}
+    err = ormlite.Upsert(db, john)
+    if err != nil {
+        panic(err)
+    }
+
+    pete := &Author{Name: "Pete"}
+    err = ormlite.Upsert(db, pete)
+    if err != nil {
+        panic(err)
+    }
+
+    cars := &Topic{Content: "Cars", Authors: []*Author{john, pete}}
+    err = ormlite.Upsert(db, cars)
+    if err != nil {
+        panic(err)
+    }
+
+    bikes := &Topic{Content: "Bikes", Authors: []*Author{john}}
+    err = ormlite.Upsert(db, bikes)
+    if err != nil {
+        panic(err)
+    }
+
+    planes := &Topic{Content: "Plains", Authors: []*Author{pete}}
+    err = ormlite.Upsert(db, planes)
+    if err != nil {
+        panic(err)
+    }
+
+    var carAuthors []*Author
+    err = ormlite.QuerySlice(db, &ormlite.Options{RelatedTo: []ormlite.IModel{&Topic{Id: cars.Id}}}, &carAuthors)
+    if err != nil {
+        panic(err)
+    }
+
+    var planeAuthors []*Author
+    err = ormlite.QuerySlice(db, &ormlite.Options{RelatedTo: []ormlite.IModel{&Topic{Id: planes.Id}}}, &planeAuthors)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Print("Car authors: ")
+    for _, a := range carAuthors {
+        fmt.Printf("%s ", a.Name)
+    }
+    fmt.Print("\n")
+
+    fmt.Print("Plane authors: ")
+    for _, a := range planeAuthors {
+        fmt.Printf("%s ", a.Name)
+    }
+```
+will result
+```
+Car authors: John Pete 
+Plane authors: Pete 
+```
+### Comparison operators
+
+This package supports different comparison operators, such as:
+
+- `Greater` stands for `>`
+- `GreaterOrEqual` stands for `>=`
+- `Less` stands for `<`
+- `LessOrEqual` stands for `<=`
+- `NotEqual` stands for `!=`
+- `BitwiseAND` stands for `value&? > 0`
+- `BitwiseANDStrict` stand for `value&? = 0`
+- `StrictString` - by default string comparison are done using `LIKE` operator, `StrictString` will force using `=`
+ 
+To use these operators just wrap value with them
+
+```go
+opts := &ormlite.Options{Where: {"Age": GreaterOrEqual(10)}}
+```
+
+### More Examples
 
 See tests.
